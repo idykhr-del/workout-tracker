@@ -7,6 +7,13 @@ import {
   DEFAULT_EXERCISES,
 } from '../data/exercises'
 import type { CustomExercise } from '../types'
+import {
+  loadDraftSync,
+  loadDraftAsync,
+  saveDraft,
+  clearDraft,
+  mergeDraft,
+} from '../utils/storage'
 
 interface Props {
   onSaveSession: (session: WorkoutSession) => void
@@ -14,33 +21,7 @@ interface Props {
   onAddCustomExercise: (ex: CustomExercise) => void
 }
 
-const DRAFT_KEY = 'workout_draft'
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
-
-// ── LocalStorage helpers ────────────────────────────────────────────
-function loadDraft(): WorkoutSession | null {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw) as WorkoutSession
-      // basic sanity check
-      if (parsed && parsed.id && Array.isArray(parsed.exercises)) return parsed
-    }
-  } catch { /* ignore */ }
-  return null
-}
-
-function saveDraft(session: WorkoutSession): void {
-  try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(session))
-  } catch (e) {
-    console.warn('saveDraft failed', e)
-  }
-}
-
-function clearDraft(): void {
-  localStorage.removeItem(DRAFT_KEY)
-}
 
 // ── Helpers ─────────────────────────────────────────────────────────
 function newSession(): WorkoutSession {
@@ -73,8 +54,8 @@ function getExerciseEntryLabel(exercises: ExerciseEntry[], entry: ExerciseEntry)
 
 // ── Component ────────────────────────────────────────────────────────
 export default function RecordScreen({ onSaveSession, customExercises, onAddCustomExercise }: Props) {
-  // Session state — initialised from draft or new
-  const [session, setSession] = useState<WorkoutSession>(() => loadDraft() ?? newSession())
+  // Session state — initialised from localStorage draft (sync) or new session
+  const [session, setSession] = useState<WorkoutSession>(() => loadDraftSync() ?? newSession())
 
   // Category / exercise selection
   const [selectedCategory, setSelectedCategory] = useState<Category>('胸')
@@ -133,16 +114,31 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
 
   const totalSets = session.exercises.reduce((acc, e) => acc + e.sets.length, 0)
 
+  // ── IDB hydration on mount ────────────────────────────────────────
+  // After the first render (which used the localStorage draft), check
+  // IndexedDB.  If IDB has a richer draft (more sets), upgrade state.
+  // This recovers data when Safari cleared localStorage in standalone mode.
+  useEffect(() => {
+    loadDraftAsync().then(idbDraft => {
+      if (!idbDraft) return
+      setSession(prev => {
+        const merged = mergeDraft(prev, idbDraft)
+        if (!merged || merged === prev) return prev
+        return merged
+      })
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])   // run once on mount only
+
   // ── Persistence — write on EVERY session change ───────────────────
-  // This is the key fix: saveDraft is called synchronously inside the
-  // state updater so the draft is never stale.
+  // saveDraft is called synchronously inside updateSession AND as a
+  // safety-net effect, covering every code path.
   const updateSession = (next: WorkoutSession) => {
-    saveDraft(next)   // write immediately, before re-render
+    saveDraft(next)   // → localStorage (sync) + IDB (async)
     setSession(next)
   }
 
-  // Safety net: also persist whenever session object changes (covers
-  // any code path that calls setSession directly)
+  // Safety-net: persist whenever React re-renders with a new session object
   useEffect(() => {
     saveDraft(session)
   }, [session])
@@ -327,8 +323,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     setTimeout(() => {
       setShowSuccess(false)
       const fresh = newSession()
-      setSession(fresh)
-      saveDraft(fresh)
+      updateSession(fresh)   // writes new blank draft to both stores
       setFinishMemo('')
       setRating(7)
     }, 2500)

@@ -1,29 +1,32 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import type { WorkoutData, WorkoutSession, CustomExercise } from '../types'
-
-const STORAGE_KEY = 'workout_data'
-
-function loadData(): WorkoutData {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {
-    // ignore
-  }
-  return { sessions: [], customExercises: [] }
-}
-
-function saveData(data: WorkoutData) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-}
+import {
+  loadDataSync,
+  loadDataAsync,
+  saveData,
+  clearData,
+  mergeWorkoutData,
+} from '../utils/storage'
 
 export function useWorkoutData() {
-  const [data, setData] = useState<WorkoutData>(loadData)
+  // Initialise instantly from localStorage so there is no loading flash
+  const [data, setData] = useState<WorkoutData>(loadDataSync)
 
-  const persist = useCallback((next: WorkoutData) => {
-    saveData(next)
-    setData(next)
+  // After mount, check IndexedDB.  If it has more sessions (e.g. after
+  // Safari cleared localStorage in standalone mode), upgrade the state.
+  useEffect(() => {
+    loadDataAsync().then(idbData => {
+      if (!idbData) return
+      setData(prev => {
+        const merged = mergeWorkoutData(prev, idbData)
+        // Only trigger re-render when something actually changed
+        if (merged === prev) return prev
+        return merged
+      })
+    })
   }, [])
+
+  // ── Mutations ─────────────────────────────────────────────────────────────
 
   const saveSession = useCallback((session: WorkoutSession) => {
     setData(prev => {
@@ -33,7 +36,7 @@ export function useWorkoutData() {
           ? prev.sessions.map(s => (s.id === session.id ? session : s))
           : [...prev.sessions, session]
       const next = { ...prev, sessions }
-      saveData(next)
+      saveData(next)   // → localStorage (sync) + IDB (async)
       return next
     })
   }, [])
@@ -49,7 +52,7 @@ export function useWorkoutData() {
   const addCustomExercise = useCallback((ex: CustomExercise) => {
     setData(prev => {
       const already = prev.customExercises.some(
-        c => c.category === ex.category && c.name === ex.name
+        c => c.category === ex.category && c.name === ex.name,
       )
       if (already) return prev
       const next = { ...prev, customExercises: [...prev.customExercises, ex] }
@@ -63,7 +66,7 @@ export function useWorkoutData() {
       const next = {
         ...prev,
         customExercises: prev.customExercises.filter(
-          c => !(c.category === category && c.name === name)
+          c => !(c.category === category && c.name === name),
         ),
       }
       saveData(next)
@@ -72,9 +75,10 @@ export function useWorkoutData() {
   }, [])
 
   const resetData = useCallback(() => {
-    const next: WorkoutData = { sessions: [], customExercises: [] }
-    persist(next)
-  }, [persist])
+    const empty: WorkoutData = { sessions: [], customExercises: [] }
+    clearData()        // removes from localStorage + IDB
+    setData(empty)
+  }, [])
 
   return {
     data,
