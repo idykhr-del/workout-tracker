@@ -5,6 +5,7 @@ import {
   loadDataAsync,
   saveData,
   clearData,
+  clearUsage,
   mergeWorkoutData,
 } from '../utils/storage'
 
@@ -76,7 +77,8 @@ export function useWorkoutData() {
 
   const resetData = useCallback(() => {
     const empty: WorkoutData = { sessions: [], customExercises: [] }
-    clearData()        // removes from localStorage + IDB
+    clearData()        // removes workout_data from localStorage + IDB
+    clearUsage()       // removes exercise_usage from localStorage + IDB
     setData(empty)
   }, [])
 

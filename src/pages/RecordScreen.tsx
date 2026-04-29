@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { Category, WorkoutSession, ExerciseEntry, WorkoutSet, SessionNote } from '../types'
 import {
   PRIMARY_CATEGORIES,
@@ -13,6 +13,9 @@ import {
   saveDraft,
   clearDraft,
   mergeDraft,
+  loadUsageSync,
+  incrementUsage,
+  type UsageMap,
 } from '../utils/storage'
 
 interface Props {
@@ -52,10 +55,36 @@ function getExerciseEntryLabel(exercises: ExerciseEntry[], entry: ExerciseEntry)
   return `${entry.name}（${idx + 1}回目）`
 }
 
+/** Today's date as YYYY-MM-DD in local time */
+function todayStr(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+
+/** Current time as HH:MM */
+function nowTimeStr(): string {
+  return new Date().toTimeString().slice(0, 5)
+}
+
+/** Sort exercise names by usage count descending; ties keep default order. */
+function sortByUsage(names: string[], category: string, usage: UsageMap): string[] {
+  return [...names].sort((a, b) => {
+    const ca = usage[`${category}/${a}`] ?? 0
+    const cb = usage[`${category}/${b}`] ?? 0
+    return cb - ca  // higher count first; stable sort preserves default order on tie
+  })
+}
+
 // ── Component ────────────────────────────────────────────────────────
 export default function RecordScreen({ onSaveSession, customExercises, onAddCustomExercise }: Props) {
   // Session state — initialised from localStorage draft (sync) or new session
   const [session, setSession] = useState<WorkoutSession>(() => loadDraftSync() ?? newSession())
+
+  // Exercise usage frequency
+  const [usage, setUsage] = useState<UsageMap>(() => loadUsageSync())
 
   // Category / exercise selection
   const [selectedCategory, setSelectedCategory] = useState<Category>('胸')
@@ -70,6 +99,12 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
   const [durationInput, setDurationInput] = useState('')
   const [distanceInput, setDistanceInput] = useState('')
   const [setMemoInput, setSetMemoInput] = useState('')
+
+  // Datetime override
+  const [showDatePicker, setShowDatePicker] = useState(false)
+  const [customDate, setCustomDate] = useState(todayStr())
+  const [customTime, setCustomTime] = useState(nowTimeStr())
+  const [useCustomDateTime, setUseCustomDateTime] = useState(false)
 
   // Session note inputs
   const [noteScore, setNoteScore] = useState(5)
@@ -86,38 +121,24 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [toast, setToast] = useState('')
 
-  const setsEndRef = useRef<HTMLDivElement>(null)
   const isCardio = selectedCategory === '有酸素'
 
-  // ── Derived ──────────────────────────────────────────────────────
-  const allExercises = (cat: Category) => [
+  // ── Sorted exercise list for current category ─────────────────────
+  const allExercisesSorted = useMemo(() => {
+    const base = [
+      ...DEFAULT_EXERCISES[selectedCategory],
+      ...customExercises.filter(c => c.category === selectedCategory).map(c => c.name),
+    ]
+    return sortByUsage(base, selectedCategory, usage)
+  }, [selectedCategory, customExercises, usage])
+
+  // allExercises helper for other categories (used in custom modal)
+  const allExercisesForCat = (cat: Category) => [
     ...DEFAULT_EXERCISES[cat],
     ...customExercises.filter(c => c.category === cat).map(c => c.name),
   ]
 
-  const currentExerciseEntry = (): ExerciseEntry | undefined =>
-    session.exercises.find(
-      e =>
-        e.category === selectedCategory &&
-        e.name === selectedExercise &&
-        e.instanceId === currentInstanceId,
-    )
-
-  const currentSets = currentExerciseEntry()?.sets ?? []
-
-  const currentExerciseLabel = useMemo(() => {
-    const sameNameEntries = session.exercises.filter(e => e.name === selectedExercise)
-    const existingIdx = sameNameEntries.findIndex(e => e.instanceId === currentInstanceId)
-    const ordinal = existingIdx >= 0 ? existingIdx + 1 : sameNameEntries.length + 1
-    return ordinal > 1 ? `${selectedExercise}（${ordinal}回目）` : selectedExercise
-  }, [session.exercises, selectedExercise, currentInstanceId])
-
-  const totalSets = session.exercises.reduce((acc, e) => acc + e.sets.length, 0)
-
   // ── IDB hydration on mount ────────────────────────────────────────
-  // After the first render (which used the localStorage draft), check
-  // IndexedDB.  If IDB has a richer draft (more sets), upgrade state.
-  // This recovers data when Safari cleared localStorage in standalone mode.
   useEffect(() => {
     loadDraftAsync().then(idbDraft => {
       if (!idbDraft) return
@@ -128,17 +149,14 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
       })
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])   // run once on mount only
+  }, [])
 
-  // ── Persistence — write on EVERY session change ───────────────────
-  // saveDraft is called synchronously inside updateSession AND as a
-  // safety-net effect, covering every code path.
+  // ── Persistence ───────────────────────────────────────────────────
   const updateSession = (next: WorkoutSession) => {
-    saveDraft(next)   // → localStorage (sync) + IDB (async)
+    saveDraft(next)
     setSession(next)
   }
 
-  // Safety-net: persist whenever React re-renders with a new session object
   useEffect(() => {
     saveDraft(session)
   }, [session])
@@ -158,10 +176,18 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     setEditingSetId(null)
   }
 
+  /** Build the ISO timestamp for a new set, respecting the datetime override. */
+  function resolveTimestamp(): string {
+    if (useCustomDateTime && customDate && customTime) {
+      return new Date(`${customDate}T${customTime}:00`).toISOString()
+    }
+    return new Date().toISOString()
+  }
+
   function buildNewSet(existingId?: string): WorkoutSet {
     return {
       id: existingId ?? crypto.randomUUID(),
-      timestamp: new Date().toISOString(),
+      timestamp: existingId ? new Date().toISOString() : resolveTimestamp(),
       ...(isCardio
         ? {
             durationMinutes: parseFloat(durationInput),
@@ -175,24 +201,43 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     }
   }
 
-  // ── Handlers ──────────────────────────────────────────────────────
-  // When user taps a primary category button
+  // ── Category / exercise navigation ────────────────────────────────
   const handleCategoryClick = (cat: Category) => {
     setSelectedCategory(cat)
     setIsMemoMode(false)
-    const exercises = allExercises(cat)
+    const exercises = allExercisesForCat(cat)
     setSelectedExercise(exercises[0] ?? '')
     setCurrentInstanceId(crypto.randomUUID())
     clearSetInputs()
   }
 
-  // When user changes exercise in the dropdown
   const handleExerciseChange = (name: string) => {
     setSelectedExercise(name)
     setCurrentInstanceId(crypto.randomUUID())
     clearSetInputs()
   }
 
+  // ── Exercise entry lookup ─────────────────────────────────────────
+  const currentExerciseEntry = (): ExerciseEntry | undefined =>
+    session.exercises.find(
+      e =>
+        e.category === selectedCategory &&
+        e.name === selectedExercise &&
+        e.instanceId === currentInstanceId,
+    )
+
+  const currentSets = currentExerciseEntry()?.sets ?? []
+
+  const currentExerciseLabel = useMemo(() => {
+    const sameNameEntries = session.exercises.filter(e => e.name === selectedExercise)
+    const existingIdx = sameNameEntries.findIndex(e => e.instanceId === currentInstanceId)
+    const ordinal = existingIdx >= 0 ? existingIdx + 1 : sameNameEntries.length + 1
+    return ordinal > 1 ? `${selectedExercise}（${ordinal}回目）` : selectedExercise
+  }, [session.exercises, selectedExercise, currentInstanceId])
+
+  const totalSets = session.exercises.reduce((acc, e) => acc + e.sets.length, 0)
+
+  // ── Set CRUD ──────────────────────────────────────────────────────
   const startEditSet = (set: WorkoutSet) => {
     setEditingSetId(set.id)
     setSetMemoInput(set.memo ?? '')
@@ -221,18 +266,6 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     updateSession({ ...session, exercises: updatedExercises })
     setDeleteConfirmId(null)
     if (editingSetId === setId) clearSetInputs()
-  }
-
-  const addNote = () => {
-    if (!noteText.trim()) return
-    const note: SessionNote = {
-      score: noteScore,
-      text: noteText.trim(),
-      timestamp: new Date().toISOString(),
-    }
-    updateSession({ ...session, notes: [...(session.notes ?? []), note] })
-    setNoteText('')
-    setNoteScore(5)
   }
 
   const addOrUpdateSet = () => {
@@ -267,7 +300,6 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
         updateSession(freshSession)
         clearSetInputs()
         showToast('前回のトレーニングから5時間以上経過したため、新しいセッションを開始しました')
-        setTimeout(() => setsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
         return
       }
     }
@@ -304,10 +336,30 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     }
 
     updateSession({ ...session, exercises: updatedExercises })
+
+    // Increment usage frequency (only for new sets, not edits)
+    if (!editingSetId) {
+      const updated = incrementUsage(selectedCategory, selectedExercise)
+      setUsage(updated)
+    }
+
     clearSetInputs()
-    setTimeout(() => setsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
   }
 
+  // ── Session notes ─────────────────────────────────────────────────
+  const addNote = () => {
+    if (!noteText.trim()) return
+    const note: SessionNote = {
+      score: noteScore,
+      text: noteText.trim(),
+      timestamp: new Date().toISOString(),
+    }
+    updateSession({ ...session, notes: [...(session.notes ?? []), note] })
+    setNoteText('')
+    setNoteScore(5)
+  }
+
+  // ── Finish workout ────────────────────────────────────────────────
   const finishWorkout = () => {
     if (totalSets === 0) return
     const finished: WorkoutSession = {
@@ -323,13 +375,14 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     setTimeout(() => {
       setShowSuccess(false)
       const fresh = newSession()
-      updateSession(fresh)   // writes new blank draft to both stores
+      updateSession(fresh)
       setFinishMemo('')
       setRating(7)
+      setUseCustomDateTime(false)
     }, 2500)
   }
 
-  // ── Category grid helpers ─────────────────────────────────────────
+  // ── Category grid ────────────────────────────────────────────────
   const isCategoryActive = (cat: Category) => selectedCategory === cat && !isMemoMode
 
   const renderCategoryButton = (cat: Category) => (
@@ -347,7 +400,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     </button>
   )
 
-  // ── Render ────────────────────────────────────────────────────────
+  // ── Render ───────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full">
 
@@ -362,16 +415,28 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
         </div>
       )}
 
+      {/* ── Past-datetime warning banner ── */}
+      {useCustomDateTime && (
+        <div className="mx-4 mt-3 px-3 py-2 rounded-xl bg-yellow-500/10 border border-yellow-500/30 flex items-center gap-2 text-xs text-yellow-400">
+          <span>⚠️</span>
+          <span>過去の日時で記録中 — {customDate} {customTime}</span>
+          <button
+            onClick={() => setUseCustomDateTime(false)}
+            className="ml-auto text-yellow-400/60 hover:text-yellow-400"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto pb-4">
 
         {/* ── Category selector ── */}
         <div className="px-4 pt-4">
-          {/* Primary 6 categories (always visible) — 3 columns × 2 rows */}
           <div className="grid grid-cols-3 gap-2">
             {PRIMARY_CATEGORIES.map(renderCategoryButton)}
           </div>
 
-          {/* Expand toggle */}
           <button
             onClick={() => setShowSecondary(v => !v)}
             className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-muted py-2 rounded-xl border border-border bg-card/50 active:bg-card transition-all"
@@ -379,12 +444,9 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
             <span>{showSecondary ? '▲ 閉じる' : '▼ もっと見る（腹筋・お尻・メモ）'}</span>
           </button>
 
-          {/* Secondary categories + Memo button (collapsed by default) */}
           {showSecondary && (
             <div className="grid grid-cols-3 gap-2 mt-2 slide-in">
               {SECONDARY_CATEGORIES.map(renderCategoryButton)}
-
-              {/* Memo button */}
               <button
                 onClick={() => setIsMemoMode(true)}
                 className={`flex flex-col items-center justify-center py-3 px-1 rounded-xl text-xs font-medium transition-all ${
@@ -441,7 +503,6 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
               </button>
             </div>
 
-            {/* Existing notes */}
             {(session.notes?.length ?? 0) > 0 && (
               <div className="mt-4">
                 <div className="text-xs text-muted mb-2 font-medium uppercase tracking-wider">
@@ -477,9 +538,14 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                 onChange={e => handleExerciseChange(e.target.value)}
                 className="flex-1 bg-card border border-border rounded-xl px-3 py-3 text-sm text-white appearance-none"
               >
-                {allExercises(selectedCategory).map(ex => (
-                  <option key={ex} value={ex}>{ex}</option>
-                ))}
+                {allExercisesSorted.map(ex => {
+                  const count = usage[`${selectedCategory}/${ex}`] ?? 0
+                  return (
+                    <option key={ex} value={ex}>
+                      {count > 0 ? `${ex}  (${count})` : ex}
+                    </option>
+                  )
+                })}
               </select>
               <button
                 onClick={() => setShowCustomModal(true)}
@@ -492,9 +558,69 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
             {/* Set input card */}
             <div className="px-4 mt-4">
               <div className="bg-card border border-border rounded-2xl p-4">
-                <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
-                  {editingSetId ? 'セットを編集' : `新しいセット — ${currentExerciseLabel}`}
+                {/* Header row: label + datetime toggle */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-xs text-muted font-medium uppercase tracking-wider">
+                    {editingSetId ? 'セットを編集' : `新しいセット — ${currentExerciseLabel}`}
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!showDatePicker) {
+                        setCustomDate(todayStr())
+                        setCustomTime(nowTimeStr())
+                      }
+                      setShowDatePicker(v => !v)
+                    }}
+                    className={`text-xs px-2 py-1 rounded-lg border transition-all ${
+                      useCustomDateTime
+                        ? 'text-yellow-400 border-yellow-500/40 bg-yellow-500/10'
+                        : 'text-muted border-border bg-surface/50'
+                    }`}
+                  >
+                    🕐 日時を変更
+                  </button>
                 </div>
+
+                {/* Datetime picker (collapsible) */}
+                {showDatePicker && (
+                  <div className="mb-3 p-3 bg-surface rounded-xl border border-border slide-in">
+                    <div className="flex gap-2 mb-2">
+                      <div className="flex-1">
+                        <label className="text-xs text-muted block mb-1">日付</label>
+                        <input
+                          type="date"
+                          value={customDate}
+                          onChange={e => { setCustomDate(e.target.value); setUseCustomDateTime(true) }}
+                          max={todayStr()}
+                          className="w-full bg-bg border border-border rounded-lg px-2 py-2 text-white text-sm"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs text-muted block mb-1">時刻</label>
+                        <input
+                          type="time"
+                          value={customTime}
+                          onChange={e => { setCustomTime(e.target.value); setUseCustomDateTime(true) }}
+                          className="w-full bg-bg border border-border rounded-lg px-2 py-2 text-white text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => { setUseCustomDateTime(true); setShowDatePicker(false) }}
+                        className="flex-1 bg-accent text-bg text-xs font-bold rounded-lg py-2"
+                      >
+                        この日時で記録
+                      </button>
+                      <button
+                        onClick={() => { setUseCustomDateTime(false); setShowDatePicker(false) }}
+                        className="flex-1 bg-card text-muted text-xs border border-border rounded-lg py-2"
+                      >
+                        現在時刻を使う
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {isCardio ? (
                   <div className="flex gap-3 mb-3">
@@ -642,9 +768,10 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                     setIsMemoMode(false)
                     setSelectedCategory(ex.category)
                     setSelectedExercise(ex.name)
-                    setCurrentInstanceId((ex.instanceId ?? crypto.randomUUID()) as ReturnType<typeof crypto.randomUUID>)
+                    setCurrentInstanceId(
+                      (ex.instanceId ?? crypto.randomUUID()) as ReturnType<typeof crypto.randomUUID>
+                    )
                     clearSetInputs()
-                    // open secondary panel if needed
                     if (SECONDARY_CATEGORIES.includes(ex.category)) setShowSecondary(true)
                   }}
                   className="w-full flex items-center justify-between px-4 py-3 text-left"
@@ -667,8 +794,6 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
             </div>
           </div>
         )}
-
-        <div ref={setsEndRef} />
       </div>
 
       {/* ── Finish button ── */}

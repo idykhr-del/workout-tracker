@@ -139,3 +139,35 @@ export function mergeDraft(
   }
   return a
 }
+
+// ─── Exercise usage frequency ──────────────────────────────────────────────────
+// Stored as Record<"category/name", count> under USAGE_KEY in both stores.
+
+export const USAGE_KEY = 'exercise_usage'
+
+export type UsageMap = Record<string, number>
+
+/** Load usage map synchronously from localStorage. */
+export function loadUsageSync(): UsageMap {
+  try {
+    const raw = localStorage.getItem(USAGE_KEY)
+    if (raw) return JSON.parse(raw) as UsageMap
+  } catch { /* ignore */ }
+  return {}
+}
+
+/** Increment the count for one exercise and persist to both stores. */
+export function incrementUsage(category: string, name: string): UsageMap {
+  const key = `${category}/${name}`
+  const map = loadUsageSync()
+  map[key] = (map[key] ?? 0) + 1
+  try { localStorage.setItem(USAGE_KEY, JSON.stringify(map)) } catch { /* ignore */ }
+  idbSet(USAGE_KEY, map).catch(() => {})
+  return map
+}
+
+/** Clear usage data from both stores (called from resetData). */
+export function clearUsage(): void {
+  try { localStorage.removeItem(USAGE_KEY) } catch { /* ignore */ }
+  idbDelete(USAGE_KEY).catch(() => {})
+}
