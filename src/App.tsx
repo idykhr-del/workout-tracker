@@ -3,22 +3,22 @@ import { useWorkoutData } from './hooks/useWorkoutData'
 import RecordScreen from './pages/RecordScreen'
 import GraphScreen from './pages/GraphScreen'
 import SettingsScreen from './pages/SettingsScreen'
-import AIChatScreen from './pages/AIChatScreen'
+import RecommendScreen from './pages/RecommendScreen'
 import type { WorkoutSession } from './types'
 
-type Tab = 'record' | 'graph' | 'ai' | 'settings'
+type Tab = 'record' | 'graph' | 'recommend' | 'settings'
 
 const TABS: { key: Tab; icon: string; label: string }[] = [
   { key: 'record',   icon: '📝', label: '記録' },
   { key: 'graph',    icon: '📊', label: 'グラフ' },
-  { key: 'ai',       icon: '🤖', label: 'AI' },
+  { key: 'recommend', icon: '💡', label: 'おすすめ' },
   { key: 'settings', icon: '⚙️', label: '設定' },
 ]
 
 const TAB_TITLES: Record<Tab, string> = {
   record:   'ワークアウト記録',
   graph:    '履歴・グラフ',
-  ai:       'AIトレーナー',
+  recommend: 'おすすめ分析',
   settings: '設定',
 }
 
@@ -57,9 +57,8 @@ export default function App() {
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'graph' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <GraphScreen data={data} />
         </div>
-        <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'ai' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-          {/* Only mount AIChatScreen when visible to reset chat on tab switch */}
-          {tab === 'ai' && <AIChatScreen data={data} />}
+        <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'recommend' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+          <RecommendScreen data={data} />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'settings' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <SettingsScreen
