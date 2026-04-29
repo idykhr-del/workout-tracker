@@ -29,11 +29,12 @@ const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
 
 // ── Helpers ─────────────────────────────────────────────────────────
 function newSession(): WorkoutSession {
-  const now = new Date()
   return {
     id: crypto.randomUUID(),
-    date: now.toISOString().split('T')[0],
-    startTime: now.toTimeString().slice(0, 5),
+    // Use local date (toISOString gives UTC which can be wrong near midnight in JST)
+    date: todayStr(),
+    // startTime is set on the first set addition, not session creation
+    startTime: '',
     exercises: [],
     notes: [],
   }
@@ -308,8 +309,12 @@ export default function RecordScreen({
         const newInstanceId = crypto.randomUUID()
         setCurrentInstanceId(newInstanceId)
 
+        // startTime = the actual time of the triggering set (= now, since it's post-split)
+        const splitNow = new Date()
         const freshSession: WorkoutSession = {
           ...newSession(),
+          date: `${splitNow.getFullYear()}-${String(splitNow.getMonth() + 1).padStart(2, '0')}-${String(splitNow.getDate()).padStart(2, '0')}`,
+          startTime: splitNow.toTimeString().slice(0, 5),
           exercises: [{
             category: selectedCategory,
             name: selectedExercise,
@@ -346,7 +351,22 @@ export default function RecordScreen({
       ]
     }
 
-    updateSession({ ...session, exercises: updatedExercises })
+    // ── Update startTime / date on the very first set ────────────────
+    // "セッションの開始時刻はその日の最初のセット追加時刻とする"
+    const isFirstSet = !editingSetId && totalSets === 0
+    const resolvedTs  = resolveTimestamp()
+    const resolvedDate = new Date(resolvedTs)
+
+    const sessionPatch: Partial<WorkoutSession> = {}
+    if (isFirstSet) {
+      sessionPatch.startTime = resolvedDate.toTimeString().slice(0, 5)
+      // If using a custom date, the session's date should reflect that too
+      if (useCustomDateTime && customDate) {
+        sessionPatch.date = customDate
+      }
+    }
+
+    updateSession({ ...session, exercises: updatedExercises, ...sessionPatch })
 
     // Usage count: +1 per SESSION (not per set).
     // Only increment if this exercise has no existing entry in the current session yet.

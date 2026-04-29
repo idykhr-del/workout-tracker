@@ -2,24 +2,27 @@ import { useState } from 'react'
 import { useWorkoutData } from './hooks/useWorkoutData'
 import RecordScreen from './pages/RecordScreen'
 import GraphScreen from './pages/GraphScreen'
-import SettingsScreen from './pages/SettingsScreen'
+import CalendarScreen from './pages/CalendarScreen'
 import RecommendScreen from './pages/RecommendScreen'
+import SettingsScreen from './pages/SettingsScreen'
 import type { WorkoutSession } from './types'
 
-type Tab = 'record' | 'graph' | 'recommend' | 'settings'
+type Tab = 'record' | 'graph' | 'calendar' | 'recommend' | 'settings'
 
 const TABS: { key: Tab; icon: string; label: string }[] = [
-  { key: 'record',   icon: '📝', label: '記録' },
-  { key: 'graph',    icon: '📊', label: 'グラフ' },
+  { key: 'record',    icon: '📝', label: '記録' },
+  { key: 'graph',     icon: '📊', label: 'グラフ' },
+  { key: 'calendar',  icon: '📅', label: 'カレンダー' },
   { key: 'recommend', icon: '💡', label: 'おすすめ' },
-  { key: 'settings', icon: '⚙️', label: '設定' },
+  { key: 'settings',  icon: '⚙️', label: '設定' },
 ]
 
 const TAB_TITLES: Record<Tab, string> = {
-  record:   'ワークアウト記録',
-  graph:    '履歴・グラフ',
+  record:    'ワークアウト記録',
+  graph:     '履歴・グラフ',
+  calendar:  'カレンダー',
   recommend: 'おすすめ分析',
-  settings: '設定',
+  settings:  '設定',
 }
 
 export default function App() {
@@ -57,6 +60,9 @@ export default function App() {
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'graph' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <GraphScreen data={data} />
         </div>
+        <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'calendar' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+          <CalendarScreen data={data} />
+        </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'recommend' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <RecommendScreen data={data} />
         </div>
@@ -69,7 +75,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* Bottom nav */}
+      {/* Bottom nav — 5 tabs, smaller text to fit */}
       <nav className="shrink-0 border-t border-border bg-surface pb-safe pb-4">
         <div className="flex">
           {TABS.map(t => (
@@ -80,8 +86,8 @@ export default function App() {
                 tab === t.key ? 'text-accent' : 'text-muted'
               }`}
             >
-              <span className="text-xl leading-none">{t.icon}</span>
-              <span className={`text-[10px] font-medium ${tab === t.key ? 'text-accent' : 'text-muted'}`}>
+              <span className="text-lg leading-none">{t.icon}</span>
+              <span className={`text-[9px] font-medium leading-tight ${tab === t.key ? 'text-accent' : 'text-muted'}`}>
                 {t.label}
               </span>
               {tab === t.key && (
