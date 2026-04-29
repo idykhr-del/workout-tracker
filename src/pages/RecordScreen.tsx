@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import type { Category, WorkoutSession, ExerciseEntry, WorkoutSet, SessionNote } from '../types'
-import { CATEGORIES, CATEGORY_ICONS, DEFAULT_EXERCISES } from '../data/exercises'
+import {
+  PRIMARY_CATEGORIES,
+  SECONDARY_CATEGORIES,
+  CATEGORY_ICONS,
+  DEFAULT_EXERCISES,
+} from '../data/exercises'
 import type { CustomExercise } from '../types'
 
 interface Props {
@@ -12,22 +17,32 @@ interface Props {
 const DRAFT_KEY = 'workout_draft'
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
 
+// ── LocalStorage helpers ────────────────────────────────────────────
 function loadDraft(): WorkoutSession | null {
   try {
     const raw = localStorage.getItem(DRAFT_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch { /* empty */ }
+    if (raw) {
+      const parsed = JSON.parse(raw) as WorkoutSession
+      // basic sanity check
+      if (parsed && parsed.id && Array.isArray(parsed.exercises)) return parsed
+    }
+  } catch { /* ignore */ }
   return null
 }
 
-function saveDraft(session: WorkoutSession) {
-  localStorage.setItem(DRAFT_KEY, JSON.stringify(session))
+function saveDraft(session: WorkoutSession): void {
+  try {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(session))
+  } catch (e) {
+    console.warn('saveDraft failed', e)
+  }
 }
 
-function clearDraft() {
+function clearDraft(): void {
   localStorage.removeItem(DRAFT_KEY)
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────
 function newSession(): WorkoutSession {
   const now = new Date()
   return {
@@ -56,12 +71,17 @@ function getExerciseEntryLabel(exercises: ExerciseEntry[], entry: ExerciseEntry)
   return `${entry.name}（${idx + 1}回目）`
 }
 
+// ── Component ────────────────────────────────────────────────────────
 export default function RecordScreen({ onSaveSession, customExercises, onAddCustomExercise }: Props) {
+  // Session state — initialised from draft or new
   const [session, setSession] = useState<WorkoutSession>(() => loadDraft() ?? newSession())
+
+  // Category / exercise selection
   const [selectedCategory, setSelectedCategory] = useState<Category>('胸')
   const [selectedExercise, setSelectedExercise] = useState<string>(() => DEFAULT_EXERCISES['胸'][0])
   const [currentInstanceId, setCurrentInstanceId] = useState(() => crypto.randomUUID())
   const [isMemoMode, setIsMemoMode] = useState(false)
+  const [showSecondary, setShowSecondary] = useState(false)
 
   // Set inputs
   const [weightInput, setWeightInput] = useState('')
@@ -88,11 +108,46 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
   const setsEndRef = useRef<HTMLDivElement>(null)
   const isCardio = selectedCategory === '有酸素'
 
+  // ── Derived ──────────────────────────────────────────────────────
   const allExercises = (cat: Category) => [
     ...DEFAULT_EXERCISES[cat],
     ...customExercises.filter(c => c.category === cat).map(c => c.name),
   ]
 
+  const currentExerciseEntry = (): ExerciseEntry | undefined =>
+    session.exercises.find(
+      e =>
+        e.category === selectedCategory &&
+        e.name === selectedExercise &&
+        e.instanceId === currentInstanceId,
+    )
+
+  const currentSets = currentExerciseEntry()?.sets ?? []
+
+  const currentExerciseLabel = useMemo(() => {
+    const sameNameEntries = session.exercises.filter(e => e.name === selectedExercise)
+    const existingIdx = sameNameEntries.findIndex(e => e.instanceId === currentInstanceId)
+    const ordinal = existingIdx >= 0 ? existingIdx + 1 : sameNameEntries.length + 1
+    return ordinal > 1 ? `${selectedExercise}（${ordinal}回目）` : selectedExercise
+  }, [session.exercises, selectedExercise, currentInstanceId])
+
+  const totalSets = session.exercises.reduce((acc, e) => acc + e.sets.length, 0)
+
+  // ── Persistence — write on EVERY session change ───────────────────
+  // This is the key fix: saveDraft is called synchronously inside the
+  // state updater so the draft is never stale.
+  const updateSession = (next: WorkoutSession) => {
+    saveDraft(next)   // write immediately, before re-render
+    setSession(next)
+  }
+
+  // Safety net: also persist whenever session object changes (covers
+  // any code path that calls setSession directly)
+  useEffect(() => {
+    saveDraft(session)
+  }, [session])
+
+  // ── Helpers ───────────────────────────────────────────────────────
   const showToast = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(''), 4000)
@@ -107,115 +162,9 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     setEditingSetId(null)
   }
 
-  // New instance + exercise reset when category changes
-  useEffect(() => {
-    if (isMemoMode) return
-    const exercises = allExercises(selectedCategory)
-    setSelectedExercise(exercises[0] ?? '')
-    setCurrentInstanceId(crypto.randomUUID())
-    clearSetInputs()
-  }, [selectedCategory]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    saveDraft(session)
-  }, [session])
-
-  const handleCategoryClick = (cat: Category) => {
-    setSelectedCategory(cat)
-    setIsMemoMode(false)
-  }
-
-  const handleExerciseChange = (name: string) => {
-    setSelectedExercise(name)
-    setCurrentInstanceId(crypto.randomUUID())
-    clearSetInputs()
-  }
-
-  const updateSession = (updated: WorkoutSession) => {
-    setSession(updated)
-  }
-
-  const currentExercise = (): ExerciseEntry | undefined =>
-    session.exercises.find(
-      e => e.category === selectedCategory && e.name === selectedExercise && e.instanceId === currentInstanceId
-    )
-
-  const currentSets = currentExercise()?.sets ?? []
-
-  // Label for the current instance (shows "（N回目）" if this is not the first occurrence)
-  const currentExerciseLabel = useMemo(() => {
-    const sameNameEntries = session.exercises.filter(e => e.name === selectedExercise)
-    const existingIdx = sameNameEntries.findIndex(e => e.instanceId === currentInstanceId)
-    const ordinal = existingIdx >= 0 ? existingIdx + 1 : sameNameEntries.length + 1
-    return ordinal > 1 ? `${selectedExercise}（${ordinal}回目）` : selectedExercise
-  }, [session.exercises, selectedExercise, currentInstanceId])
-
-  const totalSets = session.exercises.reduce((acc, e) => acc + e.sets.length, 0)
-
-  const addOrUpdateSet = () => {
-    if (isCardio ? !durationInput : !weightInput || !repsInput) return
-
-    // Auto-split: check 5h gap (only for new sets, not edits)
-    if (!editingSetId) {
-      const lastTs = getLastSetTimestamp(session)
-      if (lastTs && Date.now() - new Date(lastTs).getTime() >= FIVE_HOURS_MS) {
-        // Auto-save current session
-        const now = new Date()
-        onSaveSession({ ...session, endTime: now.toTimeString().slice(0, 5) })
-        clearDraft()
-
-        // Build the set that triggered the split
-        const splitSet: WorkoutSet = buildNewSet()
-        const newInstanceId = crypto.randomUUID()
-        setCurrentInstanceId(newInstanceId)
-
-        const freshSession = newSession()
-        const nextSession: WorkoutSession = {
-          ...freshSession,
-          exercises: [{
-            category: selectedCategory,
-            name: selectedExercise,
-            instanceId: newInstanceId,
-            sets: [splitSet],
-          }],
-        }
-        updateSession(nextSession)
-        clearSetInputs()
-        showToast('前回のトレーニングから5時間以上経過したため、新しいセッションを開始しました')
-        setTimeout(() => setsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-        return
-      }
-    }
-
-    const newSet = buildNewSet(editingSetId ?? undefined)
-    const ex = currentExercise()
-    let updatedExercises: ExerciseEntry[]
-
-    if (ex) {
-      updatedExercises = session.exercises.map(e => {
-        if (e.category === selectedCategory && e.name === selectedExercise && e.instanceId === currentInstanceId) {
-          const sets = editingSetId
-            ? e.sets.map(s => (s.id === editingSetId ? newSet : s))
-            : [...e.sets, newSet]
-          return { ...e, sets }
-        }
-        return e
-      })
-    } else {
-      updatedExercises = [
-        ...session.exercises,
-        { category: selectedCategory, name: selectedExercise, instanceId: currentInstanceId, sets: [newSet] },
-      ]
-    }
-
-    updateSession({ ...session, exercises: updatedExercises })
-    clearSetInputs()
-    setTimeout(() => setsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-  }
-
-  function buildNewSet(id?: string): WorkoutSet {
+  function buildNewSet(existingId?: string): WorkoutSet {
     return {
-      id: id ?? crypto.randomUUID(),
+      id: existingId ?? crypto.randomUUID(),
       timestamp: new Date().toISOString(),
       ...(isCardio
         ? {
@@ -228,6 +177,24 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
           }),
       memo: setMemoInput.trim() || undefined,
     }
+  }
+
+  // ── Handlers ──────────────────────────────────────────────────────
+  // When user taps a primary category button
+  const handleCategoryClick = (cat: Category) => {
+    setSelectedCategory(cat)
+    setIsMemoMode(false)
+    const exercises = allExercises(cat)
+    setSelectedExercise(exercises[0] ?? '')
+    setCurrentInstanceId(crypto.randomUUID())
+    clearSetInputs()
+  }
+
+  // When user changes exercise in the dropdown
+  const handleExerciseChange = (name: string) => {
+    setSelectedExercise(name)
+    setCurrentInstanceId(crypto.randomUUID())
+    clearSetInputs()
   }
 
   const startEditSet = (set: WorkoutSet) => {
@@ -243,12 +210,18 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
   }
 
   const deleteSet = (setId: string) => {
-    const updatedExercises = session.exercises.map(e => {
-      if (e.category === selectedCategory && e.name === selectedExercise && e.instanceId === currentInstanceId) {
-        return { ...e, sets: e.sets.filter(s => s.id !== setId) }
-      }
-      return e
-    }).filter(e => e.sets.length > 0)
+    const updatedExercises = session.exercises
+      .map(e => {
+        if (
+          e.category === selectedCategory &&
+          e.name === selectedExercise &&
+          e.instanceId === currentInstanceId
+        ) {
+          return { ...e, sets: e.sets.filter(s => s.id !== setId) }
+        }
+        return e
+      })
+      .filter(e => e.sets.length > 0)
     updateSession({ ...session, exercises: updatedExercises })
     setDeleteConfirmId(null)
     if (editingSetId === setId) clearSetInputs()
@@ -266,24 +239,124 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
     setNoteScore(5)
   }
 
+  const addOrUpdateSet = () => {
+    if (isCardio ? !durationInput : !weightInput || !repsInput) return
+
+    // ── 5-hour auto-split (new sets only) ────────────────────────
+    if (!editingSetId) {
+      const lastTs = getLastSetTimestamp(session)
+      if (lastTs && Date.now() - new Date(lastTs).getTime() >= FIVE_HOURS_MS) {
+        const autoSaved: WorkoutSession = {
+          ...session,
+          endTime: new Date().toTimeString().slice(0, 5),
+        }
+        onSaveSession(autoSaved)
+        clearDraft()
+
+        const splitSet = buildNewSet()
+        const newInstanceId = crypto.randomUUID()
+        setCurrentInstanceId(newInstanceId)
+
+        const freshSession: WorkoutSession = {
+          ...newSession(),
+          exercises: [
+            {
+              category: selectedCategory,
+              name: selectedExercise,
+              instanceId: newInstanceId,
+              sets: [splitSet],
+            },
+          ],
+        }
+        updateSession(freshSession)
+        clearSetInputs()
+        showToast('前回のトレーニングから5時間以上経過したため、新しいセッションを開始しました')
+        setTimeout(() => setsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+        return
+      }
+    }
+
+    // ── Normal add / update ──────────────────────────────────────
+    const newSet = buildNewSet(editingSetId ?? undefined)
+    const ex = currentExerciseEntry()
+    let updatedExercises: ExerciseEntry[]
+
+    if (ex) {
+      updatedExercises = session.exercises.map(e => {
+        if (
+          e.category === selectedCategory &&
+          e.name === selectedExercise &&
+          e.instanceId === currentInstanceId
+        ) {
+          const sets = editingSetId
+            ? e.sets.map(s => (s.id === editingSetId ? newSet : s))
+            : [...e.sets, newSet]
+          return { ...e, sets }
+        }
+        return e
+      })
+    } else {
+      updatedExercises = [
+        ...session.exercises,
+        {
+          category: selectedCategory,
+          name: selectedExercise,
+          instanceId: currentInstanceId,
+          sets: [newSet],
+        },
+      ]
+    }
+
+    updateSession({ ...session, exercises: updatedExercises })
+    clearSetInputs()
+    setTimeout(() => setsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+  }
+
   const finishWorkout = () => {
     if (totalSets === 0) return
-    const now = new Date()
-    onSaveSession({ ...session, endTime: now.toTimeString().slice(0, 5), rating, memo: finishMemo })
+    const finished: WorkoutSession = {
+      ...session,
+      endTime: new Date().toTimeString().slice(0, 5),
+      rating,
+      memo: finishMemo,
+    }
+    onSaveSession(finished)
     clearDraft()
     setShowFinishModal(false)
     setShowSuccess(true)
     setTimeout(() => {
       setShowSuccess(false)
-      setSession(newSession())
+      const fresh = newSession()
+      setSession(fresh)
+      saveDraft(fresh)
       setFinishMemo('')
       setRating(7)
     }, 2500)
   }
 
+  // ── Category grid helpers ─────────────────────────────────────────
+  const isCategoryActive = (cat: Category) => selectedCategory === cat && !isMemoMode
+
+  const renderCategoryButton = (cat: Category) => (
+    <button
+      key={cat}
+      onClick={() => handleCategoryClick(cat)}
+      className={`flex flex-col items-center justify-center py-3 px-1 rounded-xl text-xs font-medium transition-all ${
+        isCategoryActive(cat)
+          ? 'bg-accent text-bg font-bold shadow-lg shadow-accent/30'
+          : 'bg-card text-muted border border-border'
+      }`}
+    >
+      <span className="text-lg mb-0.5">{CATEGORY_ICONS[cat]}</span>
+      <span>{cat}</span>
+    </button>
+  )
+
+  // ── Render ────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full">
-      {/* Success overlay */}
+
+      {/* ── Success overlay ── */}
       {showSuccess && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-bg/95 slide-in">
           <div className="text-6xl mb-4">🎉</div>
@@ -295,43 +368,50 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
       )}
 
       <div className="flex-1 overflow-y-auto pb-4">
-        {/* Category + Memo selector (3×3 grid) */}
+
+        {/* ── Category selector ── */}
         <div className="px-4 pt-4">
+          {/* Primary 6 categories (always visible) — 3 columns × 2 rows */}
           <div className="grid grid-cols-3 gap-2">
-            {CATEGORIES.map(cat => (
+            {PRIMARY_CATEGORIES.map(renderCategoryButton)}
+          </div>
+
+          {/* Expand toggle */}
+          <button
+            onClick={() => setShowSecondary(v => !v)}
+            className="mt-2 w-full flex items-center justify-center gap-1 text-xs text-muted py-2 rounded-xl border border-border bg-card/50 active:bg-card transition-all"
+          >
+            <span>{showSecondary ? '▲ 閉じる' : '▼ もっと見る（腹筋・お尻・メモ）'}</span>
+          </button>
+
+          {/* Secondary categories + Memo button (collapsed by default) */}
+          {showSecondary && (
+            <div className="grid grid-cols-3 gap-2 mt-2 slide-in">
+              {SECONDARY_CATEGORIES.map(renderCategoryButton)}
+
+              {/* Memo button */}
               <button
-                key={cat}
-                onClick={() => handleCategoryClick(cat)}
+                onClick={() => setIsMemoMode(true)}
                 className={`flex flex-col items-center justify-center py-3 px-1 rounded-xl text-xs font-medium transition-all ${
-                  selectedCategory === cat && !isMemoMode
-                    ? 'bg-accent text-bg font-bold shadow-lg shadow-accent/30'
+                  isMemoMode
+                    ? 'bg-accentGreen text-bg font-bold shadow-lg shadow-accentGreen/30'
                     : 'bg-card text-muted border border-border'
                 }`}
               >
-                <span className="text-lg mb-0.5">{CATEGORY_ICONS[cat]}</span>
-                <span>{cat}</span>
+                <span className="text-lg mb-0.5">📝</span>
+                <span>メモ</span>
               </button>
-            ))}
-            {/* Memo button — 9th cell */}
-            <button
-              onClick={() => setIsMemoMode(true)}
-              className={`flex flex-col items-center justify-center py-3 px-1 rounded-xl text-xs font-medium transition-all ${
-                isMemoMode
-                  ? 'bg-accentGreen text-bg font-bold shadow-lg shadow-accentGreen/30'
-                  : 'bg-card text-muted border border-border'
-              }`}
-            >
-              <span className="text-lg mb-0.5">📝</span>
-              <span>メモ</span>
-            </button>
-          </div>
+            </div>
+          )}
         </div>
 
+        {/* ── MEMO MODE ── */}
         {isMemoMode ? (
-          /* ── Memo (note) mode ── */
           <div className="px-4 mt-4">
             <div className="bg-card border border-border rounded-2xl p-4">
-              <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">セッションメモを追加</div>
+              <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
+                セッションメモを追加
+              </div>
 
               <div className="mb-3">
                 <label className="text-xs text-muted block mb-1">スコア</label>
@@ -340,7 +420,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                   onChange={e => setNoteScore(Number(e.target.value))}
                   className="w-full bg-surface border border-border rounded-xl px-3 py-3 text-white text-sm appearance-none"
                 >
-                  {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
                     <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
@@ -378,7 +458,10 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-accentGreen font-bold text-sm">スコア {note.score}</span>
                         <span className="text-xs text-muted">
-                          {new Date(note.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(note.timestamp).toLocaleTimeString('ja-JP', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
                         </span>
                       </div>
                       <div className="text-sm text-white">{note.text}</div>
@@ -388,10 +471,11 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
               </div>
             )}
           </div>
+
         ) : (
-          /* ── Exercise recording mode ── */
+          /* ── EXERCISE RECORDING MODE ── */
           <>
-            {/* Exercise selector */}
+            {/* Exercise selector + custom button */}
             <div className="px-4 mt-4 flex gap-2">
               <select
                 value={selectedExercise}
@@ -410,7 +494,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
               </button>
             </div>
 
-            {/* Set input area */}
+            {/* Set input card */}
             <div className="px-4 mt-4">
               <div className="bg-card border border-border rounded-2xl p-4">
                 <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
@@ -475,7 +559,10 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                   {editingSetId ? '✓ セットを更新' : '＋ セットを追加'}
                 </button>
                 {editingSetId && (
-                  <button onClick={clearSetInputs} className="mt-2 w-full text-muted text-sm py-2">
+                  <button
+                    onClick={clearSetInputs}
+                    className="mt-2 w-full text-muted text-sm py-2"
+                  >
                     キャンセル
                   </button>
                 )}
@@ -498,10 +585,12 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                           startEditSet(set)
                         }}
                         className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
-                          editingSetId === set.id ? 'bg-accent/10 border-accent' : 'bg-card border-border'
+                          editingSetId === set.id
+                            ? 'bg-accent/10 border-accent'
+                            : 'bg-card border-border'
                         }`}
                       >
-                        <span className="text-muted text-sm">セット {idx + 1}</span>
+                        <span className="text-muted text-sm shrink-0">セット {idx + 1}</span>
                         <div className="flex-1 text-right mr-2">
                           <span className="font-bold text-white">
                             {isCardio
@@ -519,6 +608,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                           ×
                         </button>
                       </button>
+
                       {deleteConfirmId === set.id && (
                         <div className="flex gap-2 mt-1 slide-in">
                           <button
@@ -543,7 +633,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
           </>
         )}
 
-        {/* All exercises summary */}
+        {/* ── Today's summary ── */}
         {(session.exercises.length > 0 || (session.notes?.length ?? 0) > 0) && (
           <div className="px-4 mt-4">
             <div className="text-xs text-muted mb-2 font-medium uppercase tracking-wider">
@@ -551,7 +641,19 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
             </div>
             <div className="bg-card border border-border rounded-2xl divide-y divide-border">
               {session.exercises.map((ex, i) => (
-                <div key={i} className="flex items-center justify-between px-4 py-3">
+                <button
+                  key={i}
+                  onClick={() => {
+                    setIsMemoMode(false)
+                    setSelectedCategory(ex.category)
+                    setSelectedExercise(ex.name)
+                    setCurrentInstanceId((ex.instanceId ?? crypto.randomUUID()) as ReturnType<typeof crypto.randomUUID>)
+                    clearSetInputs()
+                    // open secondary panel if needed
+                    if (SECONDARY_CATEGORIES.includes(ex.category)) setShowSecondary(true)
+                  }}
+                  className="w-full flex items-center justify-between px-4 py-3 text-left"
+                >
                   <div>
                     <div className="text-sm font-medium text-white">
                       {getExerciseEntryLabel(session.exercises, ex)}
@@ -559,7 +661,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                     <div className="text-xs text-muted">{ex.category}</div>
                   </div>
                   <div className="text-accent font-bold text-sm">{ex.sets.length}セット</div>
-                </div>
+                </button>
               ))}
               {(session.notes?.length ?? 0) > 0 && (
                 <div className="flex items-center justify-between px-4 py-3">
@@ -574,7 +676,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
         <div ref={setsEndRef} />
       </div>
 
-      {/* Finish button */}
+      {/* ── Finish button ── */}
       <div className="px-4 py-3 border-t border-border bg-bg">
         <button
           onClick={() => { if (totalSets > 0) setShowFinishModal(true) }}
@@ -585,22 +687,25 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
         </button>
       </div>
 
-      {/* Finish modal */}
+      {/* ── Finish modal ── */}
       {showFinishModal && (
         <div className="fixed inset-0 z-40 flex items-end">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowFinishModal(false)} />
           <div className="relative w-full bg-surface rounded-t-3xl px-4 pt-6 pb-8 slide-in">
             <div className="w-10 h-1 bg-border rounded-full mx-auto mb-6" />
             <div className="text-lg font-bold text-white mb-6 text-center">ワークアウトを保存</div>
+
             <div className="mb-6">
               <div className="text-sm text-muted mb-3 text-center">今日の評価</div>
               <div className="grid grid-cols-5 gap-2">
-                {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
                   <button
                     key={n}
                     onClick={() => setRating(n)}
                     className={`py-3 rounded-xl font-bold text-sm transition-all ${
-                      rating === n ? 'bg-accent text-bg shadow-lg shadow-accent/30' : 'bg-card text-muted border border-border'
+                      rating === n
+                        ? 'bg-accent text-bg shadow-lg shadow-accent/30'
+                        : 'bg-card text-muted border border-border'
                     }`}
                   >
                     {n}
@@ -608,6 +713,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                 ))}
               </div>
             </div>
+
             <div className="mb-6">
               <div className="text-sm text-muted mb-2">メモ (任意)</div>
               <textarea
@@ -618,6 +724,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
                 className="w-full bg-card border border-border rounded-xl px-3 py-3 text-white text-sm resize-none"
               />
             </div>
+
             <button
               onClick={finishWorkout}
               className="w-full bg-accent text-bg font-bold rounded-2xl py-4 text-base active:scale-95 transition-all"
@@ -628,7 +735,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
         </div>
       )}
 
-      {/* Custom exercise modal */}
+      {/* ── Custom exercise modal ── */}
       {showCustomModal && (
         <div className="fixed inset-0 z-40 flex items-end">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowCustomModal(false)} />
@@ -637,7 +744,9 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
             <div className="text-lg font-bold text-white mb-4">カスタム種目を追加</div>
             <div className="text-sm text-muted mb-2">カテゴリ: {selectedCategory}</div>
             <input
-              type="text" placeholder="種目名" value={customName}
+              type="text"
+              placeholder="種目名"
+              value={customName}
               onChange={e => setCustomName(e.target.value)}
               className="w-full bg-card border border-border rounded-xl px-3 py-3 text-white text-sm mb-4"
             />
@@ -658,7 +767,7 @@ export default function RecordScreen({ onSaveSession, customExercises, onAddCust
         </div>
       )}
 
-      {/* Toast */}
+      {/* ── Toast ── */}
       {toast && (
         <div className="fixed bottom-24 left-4 right-4 z-50 slide-in">
           <div className="bg-surface border border-accent/40 text-white px-4 py-3 rounded-2xl text-sm shadow-xl text-center">
