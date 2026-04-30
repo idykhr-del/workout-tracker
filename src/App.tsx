@@ -5,6 +5,7 @@ import GraphScreen from './pages/GraphScreen'
 import CalendarScreen from './pages/CalendarScreen'
 import RecommendScreen from './pages/RecommendScreen'
 import SettingsScreen from './pages/SettingsScreen'
+import { loadBodyWeight, saveBodyWeight } from './utils/storage'
 import type { WorkoutSession } from './types'
 
 type Tab = 'record' | 'graph' | 'calendar' | 'recommend' | 'settings'
@@ -27,6 +28,8 @@ const TAB_TITLES: Record<Tab, string> = {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('record')
+  const [bodyWeight, setBodyWeight] = useState<number>(() => loadBodyWeight())
+
   const {
     data,
     saveSession,
@@ -37,6 +40,11 @@ export default function App() {
 
   const handleSaveSession = (session: WorkoutSession) => {
     saveSession(session)
+  }
+
+  const handleBodyWeightChange = (kg: number) => {
+    setBodyWeight(kg)
+    saveBodyWeight(kg)
   }
 
   return (
@@ -55,13 +63,14 @@ export default function App() {
             customExercises={data.customExercises}
             onAddCustomExercise={addCustomExercise}
             sessions={data.sessions}
+            bodyWeight={bodyWeight}
           />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'graph' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <GraphScreen data={data} />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'calendar' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-          <CalendarScreen data={data} />
+          <CalendarScreen data={data} onUpdateSession={saveSession} />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'recommend' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <RecommendScreen data={data} />
@@ -71,11 +80,13 @@ export default function App() {
             data={data}
             onDeleteCustomExercise={deleteCustomExercise}
             onResetData={resetData}
+            bodyWeight={bodyWeight}
+            onBodyWeightChange={handleBodyWeightChange}
           />
         </div>
       </main>
 
-      {/* Bottom nav — 5 tabs, smaller text to fit */}
+      {/* Bottom nav — 5 tabs */}
       <nav className="shrink-0 border-t border-border bg-surface pb-safe pb-4">
         <div className="flex">
           {TABS.map(t => (

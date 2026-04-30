@@ -8,7 +8,10 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import type { WorkoutData, WorkoutSession, Category } from '../types'
-import { CATEGORIES, CATEGORY_ICONS, DEFAULT_EXERCISES } from '../data/exercises'
+import { CATEGORY_ICONS, DEFAULT_EXERCISES } from '../data/exercises'
+
+// 分析対象を筋トレ5部位に限定（有酸素・腹筋・お尻は対象外）
+const ANALYSIS_CATEGORIES: Category[] = ['胸', '背中', '脚', '腕', '肩']
 
 interface Props { data: WorkoutData }
 
@@ -52,7 +55,7 @@ function categoryVolume(sessions: WorkoutSession[], cat: Category): number {
 type DayRec = { category: Category; daysSince: number | null; icon: string }
 
 function computeDayRec(sessions: WorkoutSession[], now: Date): DayRec[] {
-  return CATEGORIES.map(cat => {
+  return ANALYSIS_CATEGORIES.map(cat => {
     const lastSession = [...sessions]
       .filter(s => s.exercises.some(e => e.category === cat))
       .sort((a, b) => b.date.localeCompare(a.date))[0]
@@ -74,7 +77,7 @@ function computeDayRec(sessions: WorkoutSession[], now: Date): DayRec[] {
 type BalanceItem = { category: Category; volume: number; pct: number; isLow: boolean; icon: string }
 
 function computeBalance(sessions: WorkoutSession[]): BalanceItem[] {
-  const vols = CATEGORIES.map(cat => ({ category: cat, volume: categoryVolume(sessions, cat) }))
+  const vols = ANALYSIS_CATEGORIES.map(cat => ({ category: cat, volume: categoryVolume(sessions, cat) }))
   const maxVol = Math.max(...vols.map(v => v.volume), 1)
   return vols.map(v => ({
     category: v.category,
@@ -165,7 +168,7 @@ function computeProgressRanking(sessions: WorkoutSession[], thirtyDaysAgo: Date)
 
   for (const s of [...recentSessions].sort((a, b) => a.date.localeCompare(b.date))) {
     for (const e of s.exercises) {
-      if (e.category === '有酸素') continue
+      if (!ANALYSIS_CATEGORIES.includes(e.category)) continue
       const weights = e.sets.map(set => set.weight ?? 0).filter(w => w > 0)
       if (weights.length === 0) continue
       const key = `${e.category}/${e.name}`
@@ -214,8 +217,8 @@ function computeAdvice(
 
   const recentSessions = sessions.filter(s => new Date(s.date) >= thirtyDaysAgo)
 
-  // 1. 直近1ヶ月で未記録の部位
-  const missingCategories = CATEGORIES.filter(cat =>
+  // 1. 直近1ヶ月で未記録の部位（分析対象5部位のみ）
+  const missingCategories = ANALYSIS_CATEGORIES.filter(cat =>
     !recentSessions.some(s => s.exercises.some(e => e.category === cat))
   )
   for (const cat of missingCategories.slice(0, 2)) {
@@ -240,8 +243,7 @@ function computeAdvice(
 
   // 3. 種目の偏り（同一部位内で1種目が70%以上）
   if (advice.length < 3) {
-    for (const cat of CATEGORIES) {
-      if (cat === '有酸素') continue
+    for (const cat of ANALYSIS_CATEGORIES) {
       const catSessions = recentSessions.flatMap(s => s.exercises.filter(e => e.category === cat))
       if (catSessions.length < 3) continue
       const countMap: Record<string, number> = {}
@@ -289,7 +291,7 @@ function computeAdvice(
       const exMap: Record<string, number[]> = {}
       for (const s of [...recentSessions].sort((a, b) => a.date.localeCompare(b.date))) {
         for (const e of s.exercises) {
-          if (e.category === '有酸素') continue
+          if (!ANALYSIS_CATEGORIES.includes(e.category)) continue
           const weights = e.sets.map(set => set.weight ?? 0).filter(w => w > 0)
           if (!weights.length) continue
           const key = e.name
@@ -409,7 +411,7 @@ export default function RecommendScreen({ data }: Props) {
             <div className="text-muted text-sm text-center py-2">記録がありません</div>
           ) : (
             <>
-              <ResponsiveContainer width="100%" height={220}>
+              <ResponsiveContainer width="100%" height={160}>
                 <BarChart
                   layout="vertical"
                   data={balance.map(b => ({ name: `${b.icon}${b.category}`, pct: b.pct, isLow: b.isLow }))}

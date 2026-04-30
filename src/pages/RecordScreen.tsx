@@ -23,6 +23,7 @@ interface Props {
   customExercises: CustomExercise[]
   onAddCustomExercise: (ex: CustomExercise) => void
   sessions: WorkoutSession[]        // ← for previous record lookup
+  bodyWeight: number                // ← for calorie calculation
 }
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
@@ -118,6 +119,7 @@ export default function RecordScreen({
   customExercises,
   onAddCustomExercise,
   sessions,
+  bodyWeight,
 }: Props) {
   const [session, setSession] = useState<WorkoutSession>(() => loadDraftSync() ?? newSession())
   const [usage, setUsage] = useState<UsageMap>(() => loadUsageSync())
@@ -132,6 +134,7 @@ export default function RecordScreen({
   const [repsInput, setRepsInput] = useState('')
   const [durationInput, setDurationInput] = useState('')
   const [distanceInput, setDistanceInput] = useState('')
+  const [inclineInput, setInclineInput] = useState('') // ウォーキング傾斜
   const [setMemoInput, setSetMemoInput] = useState('')
 
   const [showDatePicker, setShowDatePicker] = useState(false)
@@ -153,6 +156,24 @@ export default function RecordScreen({
   const [toast, setToast] = useState('')
 
   const isCardio = selectedCategory === '有酸素'
+  const isRunning = selectedExercise === 'ランニング'
+  const isWalking = selectedExercise === 'ウォーキング'
+
+  // ── Estimated calories (live calculation) ────────────────────────
+  const estimatedCalories = useMemo(() => {
+    if (!isCardio || !durationInput) return null
+    const mins = parseFloat(durationInput)
+    if (isNaN(mins) || mins <= 0) return null
+    if (isRunning) {
+      return Math.round(9.8 * bodyWeight * mins / 60)
+    }
+    if (isWalking) {
+      const inc = parseFloat(inclineInput || '0')
+      const mets = 3.5 + (isNaN(inc) ? 0 : inc) * 0.2
+      return Math.round(mets * bodyWeight * mins / 60)
+    }
+    return null
+  }, [isCardio, isRunning, isWalking, durationInput, inclineInput, bodyWeight])
 
   // ── Sorted exercise list ──────────────────────────────────────────
   const allExercisesSorted = useMemo(() => {
@@ -208,6 +229,7 @@ export default function RecordScreen({
     setRepsInput('')
     setDurationInput('')
     setDistanceInput('')
+    setInclineInput('')
     setSetMemoInput('')
     setEditingSetId(null)
   }
@@ -220,6 +242,23 @@ export default function RecordScreen({
   }
 
   function buildNewSet(existingId?: string): WorkoutSet {
+    // Calorie & incline calculation for running / walking
+    let cal: number | undefined
+    let inc: number | undefined
+    if (isCardio && durationInput) {
+      const mins = parseFloat(durationInput)
+      if (!isNaN(mins) && mins > 0) {
+        if (isRunning) {
+          cal = Math.round(9.8 * bodyWeight * mins / 60)
+        } else if (isWalking) {
+          const rawInc = parseFloat(inclineInput || '0')
+          inc = isNaN(rawInc) ? 0 : rawInc
+          const mets = 3.5 + inc * 0.2
+          cal = Math.round(mets * bodyWeight * mins / 60)
+        }
+      }
+    }
+
     return {
       id: existingId ?? crypto.randomUUID(),
       timestamp: existingId ? new Date().toISOString() : resolveTimestamp(),
@@ -227,6 +266,8 @@ export default function RecordScreen({
         ? {
             durationMinutes: parseFloat(durationInput),
             distanceKm: distanceInput ? parseFloat(distanceInput) : undefined,
+            incline: inc,
+            calories: cal,
           }
         : {
             weight: parseFloat(weightInput),
@@ -275,6 +316,7 @@ export default function RecordScreen({
     if (isCardio) {
       setDurationInput(String(set.durationMinutes ?? ''))
       setDistanceInput(String(set.distanceKm ?? ''))
+      if (isWalking) setInclineInput(String(set.incline ?? ''))
     } else {
       setWeightInput(String(set.weight ?? ''))
       setRepsInput(String(set.reps ?? ''))
@@ -351,19 +393,18 @@ export default function RecordScreen({
       ]
     }
 
-    // ── Update startTime / date on the very first set ────────────────
-    // "セッションの開始時刻はその日の最初のセット追加時刻とする"
+    // ── startTime / date を最初のセットのタイムスタンプから設定 ───────
+    // 仕様: 「最初のセットのtimestamp」をセッションのstartTimeとdateに使用する
     const isFirstSet = !editingSetId && totalSets === 0
-    const resolvedTs  = resolveTimestamp()
-    const resolvedDate = new Date(resolvedTs)
-
     const sessionPatch: Partial<WorkoutSession> = {}
     if (isFirstSet) {
-      sessionPatch.startTime = resolvedDate.toTimeString().slice(0, 5)
-      // If using a custom date, the session's date should reflect that too
-      if (useCustomDateTime && customDate) {
-        sessionPatch.date = customDate
-      }
+      const setDate = new Date(newSet.timestamp)
+      sessionPatch.startTime = setDate.toTimeString().slice(0, 5)
+      sessionPatch.date = [
+        setDate.getFullYear(),
+        String(setDate.getMonth() + 1).padStart(2, '0'),
+        String(setDate.getDate()).padStart(2, '0'),
+      ].join('-')
     }
 
     updateSession({ ...session, exercises: updatedExercises, ...sessionPatch })
@@ -647,24 +688,47 @@ export default function RecordScreen({
                 )}
 
                 {isCardio ? (
-                  <div className="flex gap-2 mb-2">
-                    <div className="flex-1">
-                      <label className="text-xs text-muted block mb-1">時間 (分)</label>
-                      <input
-                        type="number" inputMode="decimal" placeholder="30"
-                        value={durationInput} onChange={e => setDurationInput(e.target.value)}
-                        className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
-                      />
+                  <>
+                    <div className="flex gap-2 mb-2">
+                      <div className="flex-1">
+                        <label className="text-xs text-muted block mb-1">時間 (分)</label>
+                        <input
+                          type="number" inputMode="decimal" placeholder="30"
+                          value={durationInput} onChange={e => setDurationInput(e.target.value)}
+                          className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs text-muted block mb-1">距離 (km) 任意</label>
+                        <input
+                          type="number" inputMode="decimal" placeholder="5.0"
+                          value={distanceInput} onChange={e => setDistanceInput(e.target.value)}
+                          className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
+                        />
+                      </div>
                     </div>
-                    <div className="flex-1">
-                      <label className="text-xs text-muted block mb-1">距離 (km) 任意</label>
-                      <input
-                        type="number" inputMode="decimal" placeholder="5.0"
-                        value={distanceInput} onChange={e => setDistanceInput(e.target.value)}
-                        className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
-                      />
-                    </div>
-                  </div>
+                    {/* ウォーキング: 傾斜入力 */}
+                    {isWalking && (
+                      <div className="mb-2">
+                        <label className="text-xs text-muted block mb-1">傾斜 (%) — 0〜30</label>
+                        <input
+                          type="number" inputMode="decimal" placeholder="0" min="0" max="30" step="0.5"
+                          value={inclineInput} onChange={e => setInclineInput(e.target.value)}
+                          className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
+                        />
+                      </div>
+                    )}
+                    {/* ランニング・ウォーキング: 推定カロリー */}
+                    {estimatedCalories !== null && (
+                      <div className="mb-2 px-3 py-2 bg-accentGreen/10 border border-accentGreen/30 rounded-xl flex items-center gap-2">
+                        <span className="text-lg">🔥</span>
+                        <span className="text-xs text-accentGreen font-bold">
+                          推定消費カロリー：{estimatedCalories} kcal
+                        </span>
+                        <span className="text-xs text-muted ml-auto">体重 {bodyWeight}kg</span>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="flex gap-2 mb-2">
                     <div className="flex-1">
@@ -731,9 +795,16 @@ export default function RecordScreen({
                         <div className="flex-1 text-right mr-2">
                           <span className="font-bold text-white">
                             {isCardio
-                              ? `${set.durationMinutes}分${set.distanceKm ? ` · ${set.distanceKm}km` : ''}`
+                              ? [
+                                  `${set.durationMinutes}分`,
+                                  set.distanceKm ? `${set.distanceKm}km` : null,
+                                  isWalking && set.incline ? `傾斜${set.incline}%` : null,
+                                ].filter(Boolean).join(' · ')
                               : `${set.weight}kg × ${set.reps}回`}
                           </span>
+                          {set.calories != null && (
+                            <div className="text-xs text-accentGreen mt-0.5">🔥 {set.calories}kcal</div>
+                          )}
                           {set.memo && <div className="text-xs text-muted mt-0.5 truncate">{set.memo}</div>}
                         </div>
                         <button

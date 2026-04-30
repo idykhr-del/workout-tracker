@@ -5,6 +5,8 @@ interface Props {
   data: WorkoutData
   onDeleteCustomExercise: (category: string, name: string) => void
   onResetData: () => void
+  bodyWeight: number
+  onBodyWeightChange: (kg: number) => void
 }
 
 function downloadCSV(data: WorkoutData) {
@@ -59,10 +61,11 @@ async function shareJSON(data: WorkoutData) {
   return false
 }
 
-export default function SettingsScreen({ data, onDeleteCustomExercise, onResetData }: Props) {
+export default function SettingsScreen({ data, onDeleteCustomExercise, onResetData, bodyWeight, onBodyWeightChange }: Props) {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [shareToast, setShareToast] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<{ category: string; name: string } | null>(null)
+  const [weightInput, setWeightInput] = useState(String(bodyWeight))
 
   const totalSessions = data.sessions.length
   const totalSets = data.sessions.reduce(
@@ -78,6 +81,35 @@ export default function SettingsScreen({ data, onDeleteCustomExercise, onResetDa
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="px-4 pt-4 pb-8 space-y-4">
+
+        {/* Body weight for calorie calculation */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">カロリー計算設定</div>
+          <div className="flex items-center gap-3">
+            <div>
+              <label className="text-xs text-muted block mb-1">体重 (kg)</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={weightInput}
+                onChange={e => setWeightInput(e.target.value)}
+                onBlur={() => {
+                  const v = parseFloat(weightInput)
+                  if (!isNaN(v) && v >= 20 && v <= 300) {
+                    onBodyWeightChange(v)
+                  } else {
+                    setWeightInput(String(bodyWeight))
+                  }
+                }}
+                min="20" max="300" step="0.5"
+                className="w-24 bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
+              />
+            </div>
+            <div className="text-xs text-muted leading-relaxed">
+              ランニング・ウォーキングの<br />消費カロリー計算に使用します
+            </div>
+          </div>
+        </div>
 
         {/* Stats */}
         <div className="bg-card border border-border rounded-2xl p-4">

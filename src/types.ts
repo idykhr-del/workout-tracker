@@ -14,6 +14,8 @@ export interface WorkoutSet {
   reps?: number
   durationMinutes?: number
   distanceKm?: number
+  incline?: number     // ウォーキング傾斜 (%)
+  calories?: number    // 推定消費カロリー (kcal)
   timestamp: string
   memo?: string
 }

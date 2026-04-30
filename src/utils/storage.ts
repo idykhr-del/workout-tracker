@@ -171,3 +171,23 @@ export function clearUsage(): void {
   try { localStorage.removeItem(USAGE_KEY) } catch { /* ignore */ }
   idbDelete(USAGE_KEY).catch(() => {})
 }
+
+// ─── Body weight (for calorie calculation) ────────────────────────────────────
+
+export const BODY_WEIGHT_KEY = 'body_weight'
+export const DEFAULT_BODY_WEIGHT = 63
+
+export function loadBodyWeight(): number {
+  try {
+    const raw = localStorage.getItem(BODY_WEIGHT_KEY)
+    if (raw) {
+      const v = parseFloat(raw)
+      if (!isNaN(v) && v > 0) return v
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_BODY_WEIGHT
+}
+
+export function saveBodyWeight(kg: number): void {
+  try { localStorage.setItem(BODY_WEIGHT_KEY, String(kg)) } catch { /* ignore */ }
+}
