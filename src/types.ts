@@ -16,6 +16,7 @@ export interface WorkoutSet {
   distanceKm?: number
   incline?: number     // ウォーキング傾斜 (%)
   calories?: number    // 推定消費カロリー (kcal)
+  grip?: string        // ラットプルダウン グリップ種類
   timestamp: string
   memo?: string
 }

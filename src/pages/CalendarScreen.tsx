@@ -17,6 +17,7 @@ interface EditSet {
   durationMinutes: string
   distanceKm: string
   incline: string
+  grip: string
   memo: string
   timestamp: string
 }
@@ -105,6 +106,9 @@ function ExerciseBlock({ entry }: { entry: WorkoutSession['exercises'][number] }
                   ].filter(Boolean).join(' · ')
                 : `${set.weight ?? 0}kg × ${set.reps ?? 0}回`}
             </span>
+            {set.grip && (
+              <span className="text-xs text-muted/80 bg-surface/60 rounded px-1.5 py-0.5">{set.grip}</span>
+            )}
             {set.calories != null && (
               <span className="text-accentGreen">🔥{set.calories}kcal</span>
             )}
@@ -343,6 +347,19 @@ function EditSessionCard({
                       className="text-red-400 text-sm w-7 h-7 flex items-center justify-center shrink-0"
                     >×</button>
                   </div>
+                  {/* Grip (ラットプルダウンのみ) */}
+                  {ex.name === 'ラットプルダウン' && (
+                    <select
+                      value={set.grip}
+                      onChange={e => onUpdateSet(exIdx, setIdx, 'grip', e.target.value)}
+                      className="w-full bg-bg border border-border rounded-lg px-2 py-1 text-white text-xs mb-1.5 appearance-none"
+                    >
+                      <option value="">グリップ未選択</option>
+                      {['ベントバー','ミドルパラレルグリップ','ミドルオーバーグリップ','ミドルアンダーグリップ',
+                        'ナローパラレルグリップ','ナローオーバーグリップ','ナローアンダーグリップ','ワイドグリップ'
+                      ].map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  )}
                   {/* Set memo */}
                   <input
                     type="text" placeholder="セットメモ（任意）"
@@ -436,6 +453,7 @@ export default function CalendarScreen({ data, onUpdateSession }: Props) {
           durationMinutes: set.durationMinutes != null ? String(set.durationMinutes) : '',
           distanceKm:      set.distanceKm      != null ? String(set.distanceKm)      : '',
           incline:         set.incline         != null ? String(set.incline)         : '',
+          grip:            set.grip            ?? '',
           memo:            set.memo            ?? '',
           timestamp:       set.timestamp,
         })),
@@ -473,6 +491,7 @@ export default function CalendarScreen({ data, onUpdateSession }: Props) {
               durationMinutes: s.durationMinutes ? parseFloat(s.durationMinutes) : undefined,
               distanceKm:      s.distanceKm      ? parseFloat(s.distanceKm)      : undefined,
               incline:         s.incline         ? parseFloat(s.incline)         : undefined,
+              grip:            s.grip            || undefined,
               memo:            s.memo            || undefined,
             })),
         }))
