@@ -5,15 +5,23 @@
 import { useMemo } from 'react'
 import {
   BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
 import type { WorkoutData, WorkoutSession, Category } from '../types'
 import { CATEGORY_ICONS, DEFAULT_EXERCISES } from '../data/exercises'
+import {
+  getSessionCaloriesData,
+  calcCardioSetCalories,
+  calcStrengthSetCalories,
+} from '../utils/calorieCalc'
 
 // 分析対象を筋トレ5部位に限定（有酸素・腹筋・お尻は対象外）
 const ANALYSIS_CATEGORIES: Category[] = ['胸', '背中', '脚', '腕', '肩']
 
-interface Props { data: WorkoutData }
+interface Props {
+  data: WorkoutData
+  bodyWeight: number
+}
 
 // ─── tiny helpers ──────────────────────────────────────────────────────────────
 
@@ -64,7 +72,6 @@ function computeDayRec(sessions: WorkoutSession[], now: Date): DayRec[] {
       : null
     return { category: cat, daysSince, icon: CATEGORY_ICONS[cat] }
   }).sort((a, b) => {
-    // never trained → top; then sort by most days ago
     if (a.daysSince === null && b.daysSince === null) return 0
     if (a.daysSince === null) return -1
     if (b.daysSince === null) return 1
@@ -114,7 +121,6 @@ function computeWeeklyTrend(sessions: WorkoutSession[], now: Date): {
     })
   }
 
-  // compare this week vs last week
   const thisVol = weeks[3].volume
   const lastVol = weeks[2].volume
   let comment: string | null = null
@@ -127,7 +133,6 @@ function computeWeeklyTrend(sessions: WorkoutSession[], now: Date): {
     }
   }
 
-  // consecutive training days warning
   const sortedDates = [...new Set(sessions.map(s => s.date))].sort()
   let maxConsec = 0, consec = 1
   for (let i = 1; i < sortedDates.length; i++) {
@@ -136,7 +141,6 @@ function computeWeeklyTrend(sessions: WorkoutSession[], now: Date): {
     if (daysBetween(prev, curr) === 1) { consec++; maxConsec = Math.max(maxConsec, consec) }
     else consec = 1
   }
-  // also check the current streak ending today
   let currentStreak = 1
   for (let i = sortedDates.length - 1; i > 0; i--) {
     const prev = new Date(sortedDates[i - 1])
@@ -162,8 +166,6 @@ type ProgressItem = {
 
 function computeProgressRanking(sessions: WorkoutSession[], thirtyDaysAgo: Date): ProgressItem[] {
   const recentSessions = sessions.filter(s => new Date(s.date) >= thirtyDaysAgo)
-
-  // collect max-weight per exercise per session date
   const exerciseData: Record<string, { category: Category; dates: { date: string; max: number }[] }> = {}
 
   for (const s of [...recentSessions].sort((a, b) => a.date.localeCompare(b.date))) {
@@ -210,27 +212,20 @@ function computeAdvice(
 ): AdviceItem[] {
   const advice: AdviceItem[] = []
 
-  // データ不足
   if (sessions.length < 3) {
     return [{ text: '記録を続けると詳細な分析ができます。まずは3回のワークアウトを記録してみましょう！', icon: '📋', type: 'info' }]
   }
 
   const recentSessions = sessions.filter(s => new Date(s.date) >= thirtyDaysAgo)
 
-  // 1. 直近1ヶ月で未記録の部位（分析対象5部位のみ）
   const missingCategories = ANALYSIS_CATEGORIES.filter(cat =>
     !recentSessions.some(s => s.exercises.some(e => e.category === cat))
   )
   for (const cat of missingCategories.slice(0, 2)) {
-    advice.push({
-      text: `${cat}が直近1ヶ月で未記録です。意識的に取り入れてみましょう`,
-      icon: '📌',
-      type: 'warning',
-    })
+    advice.push({ text: `${cat}が直近1ヶ月で未記録です。意識的に取り入れてみましょう`, icon: '📌', type: 'warning' })
     if (advice.length >= 3) return advice
   }
 
-  // 2. 全期間バランスが20%以下
   const lowBalance = balance.filter(b => b.isLow)
   for (const b of lowBalance.slice(0, 2)) {
     advice.push({
@@ -241,7 +236,6 @@ function computeAdvice(
     if (advice.length >= 3) return advice
   }
 
-  // 3. 種目の偏り（同一部位内で1種目が70%以上）
   if (advice.length < 3) {
     for (const cat of ANALYSIS_CATEGORIES) {
       const catSessions = recentSessions.flatMap(s => s.exercises.filter(e => e.category === cat))
@@ -263,14 +257,12 @@ function computeAdvice(
     }
   }
 
-  // 4. 新種目なし（直近1ヶ月）
   if (advice.length < 3 && recentSessions.length > 0) {
     const olderSessions = sessions.filter(s => new Date(s.date) < thirtyDaysAgo)
     const oldNames = new Set(olderSessions.flatMap(s => s.exercises.map(e => e.name)))
     const recentNames = new Set(recentSessions.flatMap(s => s.exercises.map(e => e.name)))
     const newNames = [...recentNames].filter(n => !oldNames.has(n))
     if (newNames.length === 0 && olderSessions.length > 0) {
-      // suggest a new exercise from an under-trained category
       const underCat = balance.sort((a, b) => a.pct - b.pct)[0]?.category ?? '背中'
       const usedInUnder = new Set(recentSessions.flatMap(s =>
         s.exercises.filter(e => e.category === underCat).map(e => e.name)
@@ -285,7 +277,6 @@ function computeAdvice(
     }
   }
 
-  // 5. 重量が1ヶ月変化していない種目
   if (advice.length < 3) {
     const stagnant = (() => {
       const exMap: Record<string, number[]> = {}
@@ -313,7 +304,6 @@ function computeAdvice(
     }
   }
 
-  // 6. 伸びている種目（ポジティブ）
   if (advice.length < 3 && progress.length > 0) {
     advice.push({
       text: `${progress[0].name}が順調に伸びています（${progress[0].firstMax}kg→${progress[0].lastMax}kg）。このまま継続しましょう！`,
@@ -323,14 +313,131 @@ function computeAdvice(
   }
 
   if (advice.length === 0) {
-    advice.push({
-      text: `バランスよくトレーニングできています。引き続き継続しましょう！`,
-      icon: '✅',
-      type: 'success',
-    })
+    advice.push({ text: `バランスよくトレーニングできています。引き続き継続しましょう！`, icon: '✅', type: 'success' })
   }
 
   return advice.slice(0, 3)
+}
+
+// ─── ⑥ カロリーサマリー ───────────────────────────────────────────────────────
+
+type CalSummary = {
+  thisMonthTotal: number
+  lastMonthTotal: number
+  diff: number
+  avgPerSession: number
+  thisMonthCount: number
+  hasData: boolean
+}
+
+function computeCalSummary(sessions: WorkoutSession[], now: Date, bodyWeight: number): CalSummary {
+  const thisMonth    = new Date(now.getFullYear(), now.getMonth(), 1)
+  const lastMonth    = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59)
+
+  const thisMonthSessions = sessions.filter(s => new Date(s.date) >= thisMonth)
+  const lastMonthSessions = sessions.filter(s => {
+    const d = new Date(s.date); return d >= lastMonth && d <= lastMonthEnd
+  })
+
+  const thisTotal = thisMonthSessions.reduce(
+    (sum, s) => sum + getSessionCaloriesData(s, bodyWeight).total, 0
+  )
+  const lastTotal = lastMonthSessions.reduce(
+    (sum, s) => sum + getSessionCaloriesData(s, bodyWeight).total, 0
+  )
+  const allTotal = sessions.reduce(
+    (sum, s) => sum + getSessionCaloriesData(s, bodyWeight).total, 0
+  )
+  const avgPerSession = sessions.length > 0 ? Math.round(allTotal / sessions.length) : 0
+
+  return {
+    thisMonthTotal: Math.round(thisTotal),
+    lastMonthTotal: Math.round(lastTotal),
+    diff:           Math.round(thisTotal - lastTotal),
+    avgPerSession,
+    thisMonthCount: thisMonthSessions.length,
+    hasData: sessions.length > 0,
+  }
+}
+
+// ─── ⑦ 週別カロリーグラフ ──────────────────────────────────────────────────────
+
+type WeekCalItem = { label: string; strength: number; cardio: number }
+
+function computeWeeklyCalories(sessions: WorkoutSession[], now: Date, bodyWeight: number): WeekCalItem[] {
+  const weeks: WeekCalItem[] = []
+  for (let w = 3; w >= 0; w--) {
+    const ws = new Date(startOfWeek(now))
+    ws.setDate(ws.getDate() - w * 7)
+    const we = new Date(ws); we.setDate(we.getDate() + 6); we.setHours(23, 59, 59)
+    const inWeek = sessions.filter(s => { const d = new Date(s.date); return d >= ws && d <= we })
+    let strength = 0, cardio = 0
+    for (const s of inWeek) {
+      const cal = getSessionCaloriesData(s, bodyWeight)
+      strength += cal.strength
+      cardio   += cal.cardio
+    }
+    const label = w === 0 ? '今週' : w === 1 ? '先週' : `${w}週前`
+    weeks.push({ label, strength: Math.round(strength), cardio: Math.round(cardio) })
+  }
+  return weeks
+}
+
+// ─── ⑧ セッション別カロリートレンド ─────────────────────────────────────────
+
+type SessionCalTrend = { date: string; total: number }
+
+function computeSessionCalTrend(
+  sessions: WorkoutSession[],
+  thirtyDaysAgo: Date,
+  bodyWeight: number,
+): SessionCalTrend[] {
+  const recent = sessions.filter(s => new Date(s.date) >= thirtyDaysAgo)
+  const byDate: Record<string, number> = {}
+  for (const s of recent) {
+    const cal = getSessionCaloriesData(s, bodyWeight)
+    byDate[s.date] = (byDate[s.date] ?? 0) + cal.total
+  }
+  return Object.entries(byDate)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, total]) => ({ date: date.slice(5).replace('-', '/'), total: Math.round(total) }))
+}
+
+// ─── ⑨ 種目別カロリーランキング ──────────────────────────────────────────────
+
+type ExCalItem = { name: string; category: Category; calories: number }
+
+function computeExCalRanking(
+  sessions: WorkoutSession[],
+  thirtyDaysAgo: Date,
+  bodyWeight: number,
+): ExCalItem[] {
+  const recent = sessions.filter(s => new Date(s.date) >= thirtyDaysAgo)
+  const byEx: Record<string, { category: Category; calories: number }> = {}
+
+  for (const s of recent) {
+    for (const ex of s.exercises) {
+      let cal = 0
+      for (const set of ex.sets) {
+        if (set.calories) {
+          cal += set.calories
+        } else if (ex.category === '有酸素' && set.durationMinutes) {
+          cal += calcCardioSetCalories(ex.name, set.durationMinutes, set.distanceKm, set.incline, bodyWeight)
+        } else if (ex.category !== '有酸素' && set.reps) {
+          cal += calcStrengthSetCalories(ex.name, ex.category, set.reps, 90, bodyWeight)
+        }
+      }
+      if (cal === 0) continue
+      if (!byEx[ex.name]) byEx[ex.name] = { category: ex.category, calories: 0 }
+      byEx[ex.name].calories += cal
+    }
+  }
+
+  return Object.entries(byEx)
+    .map(([name, data]) => ({ name, category: data.category, calories: Math.round(data.calories) }))
+    .sort((a, b) => b.calories - a.calories)
+    .slice(0, 5)
 }
 
 // ─── Custom tooltip ────────────────────────────────────────────────────────────
@@ -348,21 +455,59 @@ function ChartTooltip({ active, payload, label }: any) {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function RecommendScreen({ data }: Props) {
+export default function RecommendScreen({ data, bodyWeight }: Props) {
   const now = useMemo(() => new Date(), [])
   const thirtyDaysAgo = useMemo(() => { const d = new Date(now); d.setDate(d.getDate() - 30); return d }, [now])
 
-  const dayRec   = useMemo(() => computeDayRec(data.sessions, now), [data.sessions, now])
-  const balance  = useMemo(() => computeBalance(data.sessions), [data.sessions])
-  const weekly   = useMemo(() => computeWeeklyTrend(data.sessions, now), [data.sessions, now])
-  const progress = useMemo(() => computeProgressRanking(data.sessions, thirtyDaysAgo), [data.sessions, thirtyDaysAgo])
-  const advice   = useMemo(() => computeAdvice(data.sessions, balance, progress, thirtyDaysAgo, now), [data.sessions, balance, progress, thirtyDaysAgo, now])
+  const dayRec     = useMemo(() => computeDayRec(data.sessions, now), [data.sessions, now])
+  const balance    = useMemo(() => computeBalance(data.sessions), [data.sessions])
+  const weekly     = useMemo(() => computeWeeklyTrend(data.sessions, now), [data.sessions, now])
+  const progress   = useMemo(() => computeProgressRanking(data.sessions, thirtyDaysAgo), [data.sessions, thirtyDaysAgo])
+  const advice     = useMemo(() => computeAdvice(data.sessions, balance, progress, thirtyDaysAgo, now), [data.sessions, balance, progress, thirtyDaysAgo, now])
+  const calSummary = useMemo(() => computeCalSummary(data.sessions, now, bodyWeight), [data.sessions, now, bodyWeight])
+  const weekCal    = useMemo(() => computeWeeklyCalories(data.sessions, now, bodyWeight), [data.sessions, now, bodyWeight])
+  const sessionCal = useMemo(() => computeSessionCalTrend(data.sessions, thirtyDaysAgo, bodyWeight), [data.sessions, thirtyDaysAgo, bodyWeight])
+  const exCalRank  = useMemo(() => computeExCalRanking(data.sessions, thirtyDaysAgo, bodyWeight), [data.sessions, thirtyDaysAgo, bodyWeight])
 
   const totalSessions = data.sessions.length
+  const hasWeekCalData = weekCal.some(w => w.strength + w.cardio > 0)
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="px-4 pt-4 pb-8 space-y-4">
+
+        {/* ── ⓪ カロリーサマリーカード ── */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">🔥 カロリートラッキング</div>
+          {!calSummary.hasData ? (
+            <div className="text-muted text-sm text-center py-2">記録がありません</div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-surface rounded-xl p-3 text-center">
+                  <div className="text-[10px] text-muted mb-1">今月の消費</div>
+                  <div className="text-xl font-bold text-accentGreen">{calSummary.thisMonthTotal.toLocaleString()}</div>
+                  <div className="text-[10px] text-muted">kcal</div>
+                </div>
+                <div className="bg-surface rounded-xl p-3 text-center">
+                  <div className="text-[10px] text-muted mb-1">先月比</div>
+                  <div className={`text-xl font-bold ${calSummary.diff >= 0 ? 'text-accentGreen' : 'text-red-400'}`}>
+                    {calSummary.diff >= 0 ? '+' : ''}{calSummary.diff.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] text-muted">kcal</div>
+                </div>
+                <div className="bg-surface rounded-xl p-3 text-center">
+                  <div className="text-[10px] text-muted mb-1">平均/回</div>
+                  <div className="text-xl font-bold text-accent">{calSummary.avgPerSession.toLocaleString()}</div>
+                  <div className="text-[10px] text-muted">kcal</div>
+                </div>
+              </div>
+              <div className="text-xs text-muted text-center">
+                今月 {calSummary.thisMonthCount}回のワークアウト
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* ── ① 今日のおすすめ種目 ── */}
         <div className="bg-card border border-border rounded-2xl p-4">
@@ -377,9 +522,7 @@ export default function RecommendScreen({ data }: Props) {
                 <div
                   key={rec.category}
                   className={`flex items-center justify-between px-3 py-2.5 rounded-xl border ${
-                    i === 0
-                      ? 'bg-accent/10 border-accent/40'
-                      : 'bg-surface border-border'
+                    i === 0 ? 'bg-accent/10 border-accent/40' : 'bg-surface border-border'
                   }`}
                 >
                   <div className="flex items-center gap-2">
@@ -390,11 +533,7 @@ export default function RecommendScreen({ data }: Props) {
                     </span>
                   </div>
                   <span className="text-xs text-muted">
-                    {rec.daysSince === null
-                      ? '未記録'
-                      : rec.daysSince === 0
-                      ? '今日実施済'
-                      : `${rec.daysSince}日前`}
+                    {rec.daysSince === null ? '未記録' : rec.daysSince === 0 ? '今日実施済' : `${rec.daysSince}日前`}
                   </span>
                 </div>
               ))}
@@ -421,10 +560,7 @@ export default function RecommendScreen({ data }: Props) {
                   <XAxis type="number" domain={[0, 100]} tick={{ fill: '#8892a4', fontSize: 10 }} tickFormatter={v => `${v}%`} />
                   <YAxis dataKey="name" type="category" width={68} tick={{ fill: '#e2e8f0', fontSize: 11 }} />
                   <Tooltip content={<ChartTooltip />} formatter={(v: number) => [`${v}%`, '負荷割合']} />
-                  <Bar dataKey="pct" name="負荷割合" radius={[0, 4, 4, 0]}
-                    fill="#00d4ff"
-                    // cells get different color when isLow — done via label
-                  />
+                  <Bar dataKey="pct" name="負荷割合" radius={[0, 4, 4, 0]} fill="#00d4ff" />
                 </BarChart>
               </ResponsiveContainer>
               {balance.some(b => b.isLow) && (
@@ -453,7 +589,7 @@ export default function RecommendScreen({ data }: Props) {
                 <LineChart data={weekly.weeks} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2a4a" />
                   <XAxis dataKey="label" tick={{ fill: '#8892a4', fontSize: 10 }} />
-                  <YAxis yAxisId="left" tick={{ fill: '#8892a4', fontSize: 10 }} />
+                  <YAxis yAxisId="left"  tick={{ fill: '#8892a4', fontSize: 10 }} />
                   <YAxis yAxisId="right" orientation="right" tick={{ fill: '#8892a4', fontSize: 10 }} />
                   <Tooltip content={<ChartTooltip />} />
                   <Line yAxisId="left"  type="monotone" dataKey="sessions" name="回数" stroke="#39ff14" strokeWidth={2} dot={{ r: 4, fill: '#39ff14' }} />
@@ -509,7 +645,94 @@ export default function RecommendScreen({ data }: Props) {
           )}
         </div>
 
-        {/* ── ⑤ 総合アドバイス ── */}
+        {/* ── ⑤ 週別カロリー消費グラフ ── */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
+            📊 週別カロリー消費（直近4週間）
+          </div>
+          {!hasWeekCalData ? (
+            <div className="text-muted text-sm text-center py-2">カロリーデータがありません</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={weekCal} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a4a" />
+                <XAxis dataKey="label" tick={{ fill: '#8892a4', fontSize: 10 }} />
+                <YAxis tick={{ fill: '#8892a4', fontSize: 10 }} tickFormatter={v => `${v}`} />
+                <Tooltip
+                  content={<ChartTooltip />}
+                  formatter={(v: number) => [`${v}kcal`]}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: 10, color: '#8892a4', paddingTop: 4 }}
+                  formatter={v => v}
+                />
+                <Bar dataKey="strength" name="💪筋トレ" stackId="a" fill="#00d4ff" radius={[0, 0, 0, 0]} />
+                <Bar dataKey="cardio"   name="🏃有酸素" stackId="a" fill="#39ff14" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* ── ⑥ 1回あたりカロリートレンド ── */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
+            📈 消費カロリー推移（直近1ヶ月）
+          </div>
+          {sessionCal.length < 2 ? (
+            <div className="text-muted text-sm text-center py-2">
+              {totalSessions < 2 ? '記録が少ないためグラフを表示できません' : 'カロリーデータが不足しています'}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={160}>
+              <LineChart data={sessionCal} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2a2a4a" />
+                <XAxis dataKey="date" tick={{ fill: '#8892a4', fontSize: 9 }} />
+                <YAxis tick={{ fill: '#8892a4', fontSize: 10 }} />
+                <Tooltip content={<ChartTooltip />} formatter={(v: number) => [`${v}kcal`, '消費カロリー']} />
+                <Line type="monotone" dataKey="total" name="消費カロリー" stroke="#39ff14" strokeWidth={2} dot={{ r: 3, fill: '#39ff14' }} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* ── ⑦ 種目別カロリー消費ランキング ── */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
+            🔥 種目別カロリー消費ランキング（直近1ヶ月）
+          </div>
+          {exCalRank.length === 0 ? (
+            <div className="text-muted text-sm text-center py-2">カロリーデータがありません</div>
+          ) : (
+            <div className="space-y-2">
+              {exCalRank.map((item, i) => {
+                const maxCal = exCalRank[0].calories
+                const pct = Math.round((item.calories / maxCal) * 100)
+                const rankEmoji = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'][i] ?? `${i + 1}.`
+                return (
+                  <div key={item.name} className="flex items-center gap-2">
+                    <span className="text-base w-6 shrink-0">{rankEmoji}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-sm font-medium text-white truncate">{item.name}</span>
+                        <span className="text-xs text-accentGreen font-bold ml-2 shrink-0">
+                          {item.calories.toLocaleString()}kcal
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-surface rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-accentGreen rounded-full"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── ⑧ 総合アドバイス ── */}
         <div className="bg-card border border-border rounded-2xl p-4">
           <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">
             💬 総合アドバイス

@@ -7,6 +7,10 @@ interface Props {
   onResetData: () => void
   bodyWeight: number
   onBodyWeightChange: (kg: number) => void
+  age: number
+  onAgeChange: (age: number) => void
+  restSeconds: number
+  onRestSecondsChange: (sec: number) => void
 }
 
 function downloadCSV(data: WorkoutData) {
@@ -61,11 +65,17 @@ async function shareJSON(data: WorkoutData) {
   return false
 }
 
-export default function SettingsScreen({ data, onDeleteCustomExercise, onResetData, bodyWeight, onBodyWeightChange }: Props) {
+export default function SettingsScreen({
+  data, onDeleteCustomExercise, onResetData,
+  bodyWeight, onBodyWeightChange,
+  age, onAgeChange,
+  restSeconds, onRestSecondsChange,
+}: Props) {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [shareToast, setShareToast] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<{ category: string; name: string } | null>(null)
   const [weightInput, setWeightInput] = useState(String(bodyWeight))
+  const [ageInput, setAgeInput] = useState(String(age))
 
   const totalSessions = data.sessions.length
   const totalSets = data.sessions.reduce(
@@ -82,31 +92,72 @@ export default function SettingsScreen({ data, onDeleteCustomExercise, onResetDa
     <div className="flex flex-col h-full overflow-y-auto">
       <div className="px-4 pt-4 pb-8 space-y-4">
 
-        {/* Body weight for calorie calculation */}
+        {/* Profile & calorie calculation settings */}
         <div className="bg-card border border-border rounded-2xl p-4">
-          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">カロリー計算設定</div>
-          <div className="flex items-center gap-3">
-            <div>
-              <label className="text-xs text-muted block mb-1">体重 (kg)</label>
-              <input
-                type="number"
-                inputMode="decimal"
-                value={weightInput}
-                onChange={e => setWeightInput(e.target.value)}
-                onBlur={() => {
-                  const v = parseFloat(weightInput)
-                  if (!isNaN(v) && v >= 20 && v <= 300) {
-                    onBodyWeightChange(v)
-                  } else {
-                    setWeightInput(String(bodyWeight))
-                  }
-                }}
-                min="20" max="300" step="0.5"
-                className="w-24 bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
-              />
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">プロフィール・カロリー設定</div>
+          <div className="space-y-4">
+            {/* Body weight + Age */}
+            <div className="flex gap-3">
+              <div>
+                <label className="text-xs text-muted block mb-1">体重 (kg)</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={weightInput}
+                  onChange={e => setWeightInput(e.target.value)}
+                  onBlur={() => {
+                    const v = parseFloat(weightInput)
+                    if (!isNaN(v) && v >= 20 && v <= 300) {
+                      onBodyWeightChange(v)
+                    } else {
+                      setWeightInput(String(bodyWeight))
+                    }
+                  }}
+                  min="20" max="300" step="0.5"
+                  className="w-24 bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted block mb-1">年齢 (歳)</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  value={ageInput}
+                  onChange={e => setAgeInput(e.target.value)}
+                  onBlur={() => {
+                    const v = parseInt(ageInput)
+                    if (!isNaN(v) && v >= 10 && v <= 120) {
+                      onAgeChange(v)
+                    } else {
+                      setAgeInput(String(age))
+                    }
+                  }}
+                  min="10" max="120"
+                  className="w-24 bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold"
+                />
+              </div>
             </div>
-            <div className="text-xs text-muted leading-relaxed">
-              ランニング・ウォーキングの<br />消費カロリー計算に使用します
+            {/* Rest time between sets */}
+            <div>
+              <label className="text-xs text-muted block mb-2">セット間の休憩時間（筋トレのカロリー計算に使用）</label>
+              <div className="flex gap-2 flex-wrap">
+                {[30, 60, 90, 120, 150, 180].map(sec => (
+                  <button
+                    key={sec}
+                    onClick={() => onRestSecondsChange(sec)}
+                    className={`px-3 py-2 rounded-xl text-sm font-medium transition-all ${
+                      restSeconds === sec
+                        ? 'bg-accent text-bg font-bold shadow-md shadow-accent/30'
+                        : 'bg-surface border border-border text-muted'
+                    }`}
+                  >
+                    {sec}秒
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="text-xs text-muted">
+              全種目（筋トレ・有酸素）の消費カロリー計算に使用します
             </div>
           </div>
         </div>

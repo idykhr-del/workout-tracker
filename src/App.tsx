@@ -5,7 +5,7 @@ import GraphScreen from './pages/GraphScreen'
 import CalendarScreen from './pages/CalendarScreen'
 import RecommendScreen from './pages/RecommendScreen'
 import SettingsScreen from './pages/SettingsScreen'
-import { loadBodyWeight, saveBodyWeight } from './utils/storage'
+import { loadBodyWeight, saveBodyWeight, loadAge, saveAge, loadRestSeconds, saveRestSeconds } from './utils/storage'
 import type { WorkoutSession } from './types'
 
 type Tab = 'record' | 'graph' | 'calendar' | 'recommend' | 'settings'
@@ -28,7 +28,9 @@ const TAB_TITLES: Record<Tab, string> = {
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('record')
-  const [bodyWeight, setBodyWeight] = useState<number>(() => loadBodyWeight())
+  const [bodyWeight,   setBodyWeight]   = useState<number>(() => loadBodyWeight())
+  const [age,          setAge]          = useState<number>(() => loadAge())
+  const [restSeconds,  setRestSeconds]  = useState<number>(() => loadRestSeconds())
 
   const {
     data,
@@ -45,6 +47,16 @@ export default function App() {
   const handleBodyWeightChange = (kg: number) => {
     setBodyWeight(kg)
     saveBodyWeight(kg)
+  }
+
+  const handleAgeChange = (a: number) => {
+    setAge(a)
+    saveAge(a)
+  }
+
+  const handleRestSecondsChange = (sec: number) => {
+    setRestSeconds(sec)
+    saveRestSeconds(sec)
   }
 
   return (
@@ -64,6 +76,7 @@ export default function App() {
             onAddCustomExercise={addCustomExercise}
             sessions={data.sessions}
             bodyWeight={bodyWeight}
+            restSeconds={restSeconds}
           />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'graph' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
@@ -73,7 +86,7 @@ export default function App() {
           <CalendarScreen data={data} onUpdateSession={saveSession} />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'recommend' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-          <RecommendScreen data={data} />
+          <RecommendScreen data={data} bodyWeight={bodyWeight} />
         </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'settings' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <SettingsScreen
@@ -82,6 +95,10 @@ export default function App() {
             onResetData={resetData}
             bodyWeight={bodyWeight}
             onBodyWeightChange={handleBodyWeightChange}
+            age={age}
+            onAgeChange={handleAgeChange}
+            restSeconds={restSeconds}
+            onRestSecondsChange={handleRestSecondsChange}
           />
         </div>
       </main>

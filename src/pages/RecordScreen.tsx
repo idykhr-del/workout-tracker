@@ -16,6 +16,7 @@ import {
   incrementUsage,
   type UsageMap,
 } from '../utils/storage'
+import { calcStrengthSetCalories, calcCardioSetCalories } from '../utils/calorieCalc'
 
 interface Props {
   onSaveSession: (session: WorkoutSession) => void
@@ -23,6 +24,7 @@ interface Props {
   onAddCustomExercise: (ex: CustomExercise) => void
   sessions: WorkoutSession[]
   bodyWeight: number
+  restSeconds: number
 }
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
@@ -129,7 +131,7 @@ function formatElapsed(sec: number): string {
 // ── Component ────────────────────────────────────────────────────────
 
 export default function RecordScreen({
-  onSaveSession, customExercises, onAddCustomExercise, sessions, bodyWeight,
+  onSaveSession, customExercises, onAddCustomExercise, sessions, bodyWeight, restSeconds,
 }: Props) {
   // ── Core session state ────────────────────────────────────────────
   const [session, setSession] = useState<WorkoutSession>(() => loadDraftSync() ?? newSession())
@@ -184,22 +186,37 @@ export default function RecordScreen({
 
   // ── Derived ───────────────────────────────────────────────────────
   const isCardio      = selectedCategory === '有酸素'
-  const isRunning     = selectedExercise === 'ランニング'
   const isWalking     = selectedExercise === 'ウォーキング'
   const isLatPulldown = selectedExercise === 'ラットプルダウン'
 
   const estimatedCalories = useMemo(() => {
-    if (!isCardio || !durationInput) return null
-    const mins = parseFloat(durationInput)
-    if (isNaN(mins) || mins <= 0) return null
-    if (isRunning) return Math.round(9.8 * bodyWeight * mins / 60)
-    if (isWalking) {
-      const inc  = parseFloat(inclineInput || '0')
-      const mets = 3.5 + (isNaN(inc) ? 0 : inc) * 0.2
-      return Math.round(mets * bodyWeight * mins / 60)
+    if (isCardio) {
+      if (!durationInput) return null
+      const mins = parseFloat(durationInput)
+      if (isNaN(mins) || mins <= 0) return null
+      const dist = distanceInput ? parseFloat(distanceInput) : undefined
+      const inc  = isWalking ? parseFloat(inclineInput || '0') : undefined
+      return calcCardioSetCalories(selectedExercise, mins, dist, inc, bodyWeight)
+    } else {
+      if (!repsInput) return null
+      const reps = parseInt(repsInput)
+      if (isNaN(reps) || reps <= 0) return null
+      return calcStrengthSetCalories(selectedExercise, selectedCategory, reps, restSeconds, bodyWeight)
     }
-    return null
-  }, [isCardio, isRunning, isWalking, durationInput, inclineInput, bodyWeight])
+  }, [isCardio, isWalking, selectedExercise, selectedCategory, durationInput, distanceInput, inclineInput, repsInput, bodyWeight, restSeconds])
+
+  /** セッション全体のカロリー内訳（フィニッシュモーダル用） */
+  const sessionCalSummary = useMemo(() => {
+    let strength = 0, cardio = 0
+    for (const ex of session.exercises) {
+      for (const set of ex.sets) {
+        const cal = set.calories ?? 0
+        if (ex.category === '有酸素') cardio += cal
+        else strength += cal
+      }
+    }
+    return { strength, cardio, total: strength + cardio }
+  }, [session.exercises])
 
   const allExercisesSorted = useMemo(() => {
     const base = [
@@ -225,6 +242,9 @@ export default function RecordScreen({
     )
 
   const currentSets = currentExerciseEntry()?.sets ?? []
+
+  /** 現在選択中の種目の今日の合計カロリー */
+  const currentExerciseCalories = currentSets.reduce((sum, s) => sum + (s.calories ?? 0), 0)
 
   const currentExerciseLabel = useMemo(() => {
     const same = session.exercises.filter(e => e.name === selectedExercise)
@@ -287,24 +307,39 @@ export default function RecordScreen({
   function buildNewSet(existingId?: string): WorkoutSet {
     let cal: number | undefined
     let inc: number | undefined
+
     if (isCardio && durationInput) {
       const mins = parseFloat(durationInput)
       if (!isNaN(mins) && mins > 0) {
-        if (isRunning) {
-          cal = Math.round(9.8 * bodyWeight * mins / 60)
-        } else if (isWalking) {
+        const dist = distanceInput ? parseFloat(distanceInput) : undefined
+        if (isWalking) {
           const rawInc = parseFloat(inclineInput || '0')
           inc = isNaN(rawInc) ? 0 : rawInc
-          cal = Math.round((3.5 + inc * 0.2) * bodyWeight * mins / 60)
         }
+        cal = calcCardioSetCalories(selectedExercise, mins, dist, inc, bodyWeight)
+      }
+    } else if (!isCardio && weightInput && repsInput) {
+      const reps = parseInt(repsInput, 10)
+      if (!isNaN(reps) && reps > 0) {
+        cal = calcStrengthSetCalories(selectedExercise, selectedCategory, reps, restSeconds, bodyWeight)
       }
     }
+
     return {
       id: existingId ?? crypto.randomUUID(),
       timestamp: existingId ? new Date().toISOString() : resolveTimestamp(),
       ...(isCardio
-        ? { durationMinutes: parseFloat(durationInput), distanceKm: distanceInput ? parseFloat(distanceInput) : undefined, incline: inc, calories: cal }
-        : { weight: parseFloat(weightInput), reps: parseInt(repsInput, 10) }),
+        ? {
+            durationMinutes: parseFloat(durationInput),
+            distanceKm: distanceInput ? parseFloat(distanceInput) : undefined,
+            incline: inc,
+            calories: cal,
+          }
+        : {
+            weight: parseFloat(weightInput),
+            reps: parseInt(repsInput, 10),
+            calories: cal,
+          }),
       grip: (!isCardio && isLatPulldown && gripInput) ? gripInput : undefined,
       memo: setMemoInput.trim() || undefined,
     }
@@ -432,7 +467,14 @@ export default function RecordScreen({
 
   const finishWorkout = () => {
     if (totalSets === 0) return
-    const finished = { ...session, endTime: new Date().toTimeString().slice(0, 5), rating, memo: finishMemo }
+    const totalCal = sessionCalSummary.total
+    const finished = {
+      ...session,
+      endTime: new Date().toTimeString().slice(0, 5),
+      rating,
+      memo: finishMemo,
+      totalCalories: totalCal > 0 ? totalCal : undefined,
+    }
     const newPRs   = computePRs(session, sessions)
     setFinishedSetCount(totalSets)
     onSaveSession(finished)
@@ -756,26 +798,35 @@ export default function RecordScreen({
                         <div className="mb-2 px-3 py-2 bg-accentGreen/10 border border-accentGreen/30 rounded-xl flex items-center gap-2">
                           <span className="text-lg">🔥</span>
                           <span className="text-xs text-accentGreen font-bold">推定消費カロリー：{estimatedCalories} kcal</span>
-                          <span className="text-xs text-muted ml-auto">体重 {bodyWeight}kg</span>
+                          <span className="text-xs text-muted ml-auto">休憩 {restSeconds}秒含む</span>
                         </div>
                       )}
                     </>
                   ) : (
-                    <div className="flex gap-2 mb-2">
-                      <div className="flex-1">
-                        <label className="text-xs text-muted block mb-1">重量 (kg)</label>
-                        <input type="number" inputMode="decimal" placeholder="60"
-                          value={weightInput} onChange={e => setWeightInput(e.target.value)}
-                          className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold" />
+                    <>
+                      <div className="flex gap-2 mb-2">
+                        <div className="flex-1">
+                          <label className="text-xs text-muted block mb-1">重量 (kg)</label>
+                          <input type="number" inputMode="decimal" placeholder="60"
+                            value={weightInput} onChange={e => setWeightInput(e.target.value)}
+                            className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold" />
+                        </div>
+                        <div className="flex items-end pb-2.5 text-muted font-bold">×</div>
+                        <div className="flex-1">
+                          <label className="text-xs text-muted block mb-1">回数 (reps)</label>
+                          <input type="number" inputMode="numeric" placeholder="10"
+                            value={repsInput} onChange={e => setRepsInput(e.target.value)}
+                            className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold" />
+                        </div>
                       </div>
-                      <div className="flex items-end pb-2.5 text-muted font-bold">×</div>
-                      <div className="flex-1">
-                        <label className="text-xs text-muted block mb-1">回数 (reps)</label>
-                        <input type="number" inputMode="numeric" placeholder="10"
-                          value={repsInput} onChange={e => setRepsInput(e.target.value)}
-                          className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-center text-lg font-bold" />
-                      </div>
-                    </div>
+                      {estimatedCalories !== null && (
+                        <div className="mb-2 px-3 py-1.5 bg-accentGreen/10 border border-accentGreen/30 rounded-xl flex items-center gap-2">
+                          <span>🔥</span>
+                          <span className="text-xs text-accentGreen font-bold">推定 {estimatedCalories} kcal</span>
+                          <span className="text-xs text-muted ml-auto">休憩 {restSeconds}秒含む</span>
+                        </div>
+                      )}
+                    </>
                   )}
 
                   <input type="text" placeholder="メモ（任意）"
@@ -801,8 +852,15 @@ export default function RecordScreen({
             {/* Sets list */}
             {currentSets.length > 0 && (
               <div className="px-4 mt-3">
-                <div className="text-xs text-muted mb-1.5 font-medium uppercase tracking-wider">
-                  {currentExerciseLabel} — {currentSets.length}セット
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-xs text-muted font-medium uppercase tracking-wider">
+                    {currentExerciseLabel} — {currentSets.length}セット
+                  </div>
+                  {currentExerciseCalories > 0 && (
+                    <div className="text-xs text-accentGreen font-bold">
+                      🔥 合計 {currentExerciseCalories}kcal
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   {currentSets.map((set, idx) => (
@@ -866,25 +924,31 @@ export default function RecordScreen({
               今日の記録 — {totalSets}セット
             </div>
             <div className="bg-card border border-border rounded-2xl divide-y divide-border">
-              {session.exercises.map((ex, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    setIsMemoMode(false)
-                    setSelectedCategory(ex.category)
-                    setSelectedExercise(ex.name)
-                    setCurrentInstanceId((ex.instanceId ?? crypto.randomUUID()) as ReturnType<typeof crypto.randomUUID>)
-                    clearSetInputs()
-                  }}
-                  className="w-full flex items-center justify-between px-4 py-3 text-left"
-                >
-                  <div>
-                    <div className="text-sm font-medium text-white">{getExerciseEntryLabel(session.exercises, ex)}</div>
-                    <div className="text-xs text-muted">{ex.category}</div>
-                  </div>
-                  <div className="text-accent font-bold text-sm">{ex.sets.length}セット</div>
-                </button>
-              ))}
+              {session.exercises.map((ex, i) => {
+                const exCal = ex.sets.reduce((sum, s) => sum + (s.calories ?? 0), 0)
+                return (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      setIsMemoMode(false)
+                      setSelectedCategory(ex.category)
+                      setSelectedExercise(ex.name)
+                      setCurrentInstanceId((ex.instanceId ?? crypto.randomUUID()) as ReturnType<typeof crypto.randomUUID>)
+                      clearSetInputs()
+                    }}
+                    className="w-full flex items-center justify-between px-4 py-3 text-left"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-white">{getExerciseEntryLabel(session.exercises, ex)}</div>
+                      <div className="text-xs text-muted">{ex.category}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-accent font-bold text-sm">{ex.sets.length}セット</div>
+                      {exCal > 0 && <div className="text-xs text-accentGreen">🔥 {exCal}kcal</div>}
+                    </div>
+                  </button>
+                )
+              })}
               {(session.notes?.length ?? 0) > 0 && (
                 <div className="flex items-center justify-between px-4 py-3">
                   <div className="text-sm font-medium text-white">📝 メモ</div>
@@ -920,9 +984,27 @@ export default function RecordScreen({
       {showFinishModal && (
         <div className="fixed inset-0 z-40 flex items-end">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowFinishModal(false)} />
-          <div className="relative w-full bg-surface rounded-t-3xl px-4 pt-6 pb-8 slide-in">
+          <div className="relative w-full bg-surface rounded-t-3xl px-4 pt-6 pb-8 slide-in max-h-[90vh] overflow-y-auto">
             <div className="w-10 h-1 bg-border rounded-full mx-auto mb-6" />
-            <div className="text-lg font-bold text-white mb-6 text-center">ワークアウトを保存</div>
+            <div className="text-lg font-bold text-white mb-4 text-center">ワークアウトを保存</div>
+
+            {/* Calorie summary */}
+            {sessionCalSummary.total > 0 && (
+              <div className="mb-5 bg-accentGreen/10 border border-accentGreen/30 rounded-2xl p-4">
+                <div className="text-xs text-accentGreen font-bold mb-2 uppercase tracking-wider">🔥 今回の推定消費カロリー</div>
+                <div className="text-3xl font-bold text-white">
+                  {sessionCalSummary.total}
+                  <span className="text-base text-muted font-normal ml-1">kcal</span>
+                </div>
+                {sessionCalSummary.strength > 0 && sessionCalSummary.cardio > 0 && (
+                  <div className="flex gap-4 text-xs text-muted mt-2">
+                    <span>💪 筋トレ: {sessionCalSummary.strength}kcal</span>
+                    <span>🏃 有酸素: {sessionCalSummary.cardio}kcal</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="mb-6">
               <div className="text-sm text-muted mb-3 text-center">今日の評価</div>
               <div className="grid grid-cols-5 gap-2">

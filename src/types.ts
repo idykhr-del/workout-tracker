@@ -43,6 +43,7 @@ export interface WorkoutSession {
   memo?: string
   exercises: ExerciseEntry[]
   notes?: SessionNote[]
+  totalCalories?: number   // セッション全体の推定消費カロリー (kcal)
 }
 
 export interface CustomExercise {

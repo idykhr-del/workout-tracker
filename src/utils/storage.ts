@@ -191,3 +191,43 @@ export function loadBodyWeight(): number {
 export function saveBodyWeight(kg: number): void {
   try { localStorage.setItem(BODY_WEIGHT_KEY, String(kg)) } catch { /* ignore */ }
 }
+
+// ─── Age (profile) ────────────────────────────────────────────────────────────
+
+export const AGE_KEY = 'user_age'
+export const DEFAULT_AGE = 24
+
+export function loadAge(): number {
+  try {
+    const raw = localStorage.getItem(AGE_KEY)
+    if (raw) {
+      const v = parseInt(raw)
+      if (!isNaN(v) && v > 0) return v
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_AGE
+}
+
+export function saveAge(age: number): void {
+  try { localStorage.setItem(AGE_KEY, String(age)) } catch { /* ignore */ }
+}
+
+// ─── Rest seconds between sets (for calorie calculation) ─────────────────────
+
+export const REST_SECONDS_KEY = 'rest_seconds'
+export const DEFAULT_REST_SECONDS = 90
+
+export function loadRestSeconds(): number {
+  try {
+    const raw = localStorage.getItem(REST_SECONDS_KEY)
+    if (raw) {
+      const v = parseInt(raw)
+      if (!isNaN(v) && v >= 0) return v
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_REST_SECONDS
+}
+
+export function saveRestSeconds(sec: number): void {
+  try { localStorage.setItem(REST_SECONDS_KEY, String(sec)) } catch { /* ignore */ }
+}
