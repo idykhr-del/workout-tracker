@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useWorkoutData } from './hooks/useWorkoutData'
 import RecordScreen from './pages/RecordScreen'
 import GraphScreen from './pages/GraphScreen'
@@ -6,7 +6,11 @@ import CalendarScreen from './pages/CalendarScreen'
 import RecommendScreen from './pages/RecommendScreen'
 import SettingsScreen from './pages/SettingsScreen'
 import { loadBodyWeight, saveBodyWeight, loadAge, saveAge, loadRestSeconds, saveRestSeconds } from './utils/storage'
+import { migrateSessionCalories } from './utils/calorieCalc'
 import type { WorkoutSession } from './types'
+
+// カロリー計算式バージョン管理：バージョンが変わったら全セッションを遡及計算する
+const CALORIE_CALC_VERSION = 'calorie_v2'
 
 type Tab = 'record' | 'graph' | 'calendar' | 'recommend' | 'settings'
 
@@ -39,6 +43,28 @@ export default function App() {
     deleteCustomExercise,
     resetData,
   } = useWorkoutData()
+
+  // ── カロリー遡及計算（1回だけ実行）────────────────────────────────────────
+  const migrationDone = useRef(false)
+  useEffect(() => {
+    if (migrationDone.current) return
+    if (data.sessions.length === 0) return
+    try {
+      if (localStorage.getItem('calorie_calc_ver') === CALORIE_CALC_VERSION) {
+        migrationDone.current = true
+        return
+      }
+    } catch { /* ignore */ }
+
+    // 全セッションを新しい計算式で遡及計算
+    const bw   = loadBodyWeight()
+    const rest = loadRestSeconds()
+    const updated = migrateSessionCalories(data.sessions, bw, rest)
+    updated.forEach(s => saveSession(s))
+
+    try { localStorage.setItem('calorie_calc_ver', CALORIE_CALC_VERSION) } catch { /* ignore */ }
+    migrationDone.current = true
+  }, [data.sessions, saveSession])
 
   const handleSaveSession = (session: WorkoutSession) => {
     saveSession(session)
