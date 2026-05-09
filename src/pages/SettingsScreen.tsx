@@ -220,7 +220,16 @@ export default function SettingsScreen({
                   <div className="flex items-center justify-between bg-surface rounded-xl px-3 py-3">
                     <div>
                       <div className="text-sm text-white font-medium">{ex.name}</div>
-                      <div className="text-xs text-muted">{ex.category}</div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-xs text-muted">{ex.category}</span>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-md ${
+                          ex.exerciseType === 'cardio'
+                            ? 'bg-accentGreen/15 text-accentGreen border border-accentGreen/30'
+                            : 'bg-accent/15 text-accent border border-accent/20'
+                        }`}>
+                          {ex.exerciseType === 'cardio' ? '🏃 有酸素' : '💪 筋トレ'}
+                        </span>
+                      </div>
                     </div>
                     <button
                       onClick={() => setDeleteConfirm({ category: ex.category, name: ex.name })}

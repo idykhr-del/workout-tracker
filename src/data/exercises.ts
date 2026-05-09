@@ -69,6 +69,7 @@ export const DEFAULT_EXERCISES: Record<Category, string[]> = {
     'オーバーヘッドエクステンション',
     'ナローグリップベンチプレス',
     'リストカール',
+    'ディップス（三頭筋）',
   ],
   '肩': [
     'シーテッドサイドレイズ',

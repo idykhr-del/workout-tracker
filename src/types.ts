@@ -49,6 +49,7 @@ export interface WorkoutSession {
 export interface CustomExercise {
   category: Category
   name: string
+  exerciseType?: 'strength' | 'cardio'  // 未設定の場合は筋トレ扱い
 }
 
 export interface WorkoutData {

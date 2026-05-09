@@ -171,21 +171,31 @@ export default function RecordScreen({
   const [noteText,  setNoteText]  = useState('')
 
   // ── Modals / overlays ─────────────────────────────────────────────
-  const [editingSetId,     setEditingSetId]     = useState<string | null>(null)
-  const [showFinishModal,  setShowFinishModal]  = useState(false)
-  const [rating,           setRating]           = useState(7)
-  const [finishMemo,       setFinishMemo]       = useState('')
-  const [showCustomModal,  setShowCustomModal]  = useState(false)
-  const [customName,       setCustomName]       = useState('')
-  const [showSuccess,      setShowSuccess]      = useState(false)
-  const [showPRCelebration,setShowPRCelebration]= useState(false)
-  const [prs,              setPrs]              = useState<PRItem[]>([])
-  const [finishedSetCount, setFinishedSetCount] = useState(0)
-  const [deleteConfirmId,  setDeleteConfirmId]  = useState<string | null>(null)
-  const [toast,            setToast]            = useState('')
+  const [editingSetId,      setEditingSetId]      = useState<string | null>(null)
+  const [showFinishModal,   setShowFinishModal]   = useState(false)
+  const [rating,            setRating]            = useState(7)
+  const [finishMemo,        setFinishMemo]        = useState('')
+  const [showCustomModal,   setShowCustomModal]   = useState(false)
+  const [customName,        setCustomName]        = useState('')
+  const [customModalCat,    setCustomModalCat]    = useState<Category>(selectedCategory)
+  const [customModalType,   setCustomModalType]   = useState<'strength' | 'cardio'>('strength')
+  const [showSuccess,       setShowSuccess]       = useState(false)
+  const [showPRCelebration, setShowPRCelebration] = useState(false)
+  const [prs,               setPrs]              = useState<PRItem[]>([])
+  const [finishedSetCount,  setFinishedSetCount]  = useState(0)
+  const [deleteConfirmId,   setDeleteConfirmId]   = useState<string | null>(null)
+  const [toast,             setToast]             = useState('')
 
   // ── Derived ───────────────────────────────────────────────────────
-  const isCardio      = selectedCategory === '有酸素'
+  /** カスタム有酸素種目（非有酸素カテゴリに登録されたカーディオタイプ）か */
+  const isCustomCardio = useMemo(() => {
+    if (selectedCategory === '有酸素') return false
+    return customExercises.some(
+      c => c.category === selectedCategory && c.name === selectedExercise && c.exerciseType === 'cardio'
+    )
+  }, [selectedCategory, selectedExercise, customExercises])
+
+  const isCardio      = selectedCategory === '有酸素' || isCustomCardio
   const isWalking     = selectedExercise === 'ウォーキング'
   const isLatPulldown = selectedExercise === 'ラットプルダウン'
 
@@ -669,7 +679,12 @@ export default function RecordScreen({
                 })}
               </select>
               <button
-                onClick={() => setShowCustomModal(true)}
+                onClick={() => {
+                  setCustomModalCat(selectedCategory)
+                  setCustomModalType(selectedCategory === '有酸素' ? 'cardio' : 'strength')
+                  setCustomName('')
+                  setShowCustomModal(true)
+                }}
                 className="bg-card border border-border rounded-xl px-3 py-2.5 text-accent text-sm font-medium whitespace-nowrap"
               >
                 ＋
@@ -1036,21 +1051,94 @@ export default function RecordScreen({
         <div className="fixed inset-0 z-40 flex items-end">
           <div className="absolute inset-0 bg-black/60" onClick={() => setShowCustomModal(false)} />
           <div className="relative w-full bg-surface rounded-t-3xl px-4 pt-6 pb-8 slide-in">
-            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-6" />
-            <div className="text-lg font-bold text-white mb-4">カスタム種目を追加</div>
-            <div className="text-sm text-muted mb-2">カテゴリ: {selectedCategory}</div>
-            <input type="text" placeholder="種目名" value={customName}
-              onChange={e => setCustomName(e.target.value)}
-              className="w-full bg-card border border-border rounded-xl px-3 py-3 text-white text-sm mb-4" />
+            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-5" />
+            <div className="text-lg font-bold text-white mb-5">カスタム種目を追加</div>
+
+            {/* 種目名 */}
+            <div className="mb-4">
+              <label className="text-xs text-muted block mb-1.5">種目名</label>
+              <input
+                type="text"
+                placeholder="例：ケーブルフライ"
+                value={customName}
+                onChange={e => setCustomName(e.target.value)}
+                className="w-full bg-card border border-border rounded-xl px-3 py-3 text-white text-sm"
+                autoFocus
+              />
+            </div>
+
+            {/* カテゴリ選択 */}
+            <div className="mb-4">
+              <label className="text-xs text-muted block mb-1.5">大項目（カテゴリ）</label>
+              <select
+                value={customModalCat}
+                onChange={e => {
+                  const cat = e.target.value as Category
+                  setCustomModalCat(cat)
+                  if (cat === '有酸素') setCustomModalType('cardio')
+                }}
+                className="w-full bg-card border border-border rounded-xl px-3 py-3 text-white text-sm appearance-none"
+              >
+                {CATEGORIES.map(cat => (
+                  <option key={cat} value={cat}>{CATEGORY_ICONS[cat]} {cat}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* 種目タイプ */}
+            <div className="mb-6">
+              <label className="text-xs text-muted block mb-1.5">種目タイプ</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setCustomModalType('strength')}
+                  className={`py-3 rounded-xl text-sm font-bold transition-all border ${
+                    customModalType === 'strength'
+                      ? 'bg-accent text-bg border-accent shadow-md shadow-accent/30'
+                      : 'bg-card text-muted border-border'
+                  }`}
+                >
+                  💪 筋トレ
+                </button>
+                <button
+                  onClick={() => setCustomModalType('cardio')}
+                  className={`py-3 rounded-xl text-sm font-bold transition-all border ${
+                    customModalType === 'cardio'
+                      ? 'bg-accentGreen text-bg border-accentGreen shadow-md shadow-accentGreen/30'
+                      : 'bg-card text-muted border-border'
+                  }`}
+                >
+                  🏃 有酸素
+                </button>
+              </div>
+              <div className="text-xs text-muted mt-1.5">
+                {customModalType === 'strength'
+                  ? '重量・回数で記録。中程度METs（8.0）でカロリー計算'
+                  : '時間・距離で記録。METs 5.0でカロリー計算'}
+              </div>
+            </div>
+
             <button
               onClick={() => {
-                if (!customName.trim()) return
                 const name = customName.trim()
-                onAddCustomExercise({ category: selectedCategory, name })
-                handleExerciseChange(name)
-                setCustomName(''); setShowCustomModal(false)
+                if (!name) return
+                onAddCustomExercise({
+                  category:     customModalCat,
+                  name,
+                  exerciseType: customModalType,
+                })
+                // 追加したカテゴリに移動して選択状態にする
+                if (customModalCat !== selectedCategory) {
+                  setSelectedCategory(customModalCat)
+                  setIsMemoMode(false)
+                }
+                setSelectedExercise(name)
+                setCurrentInstanceId(crypto.randomUUID())
+                clearSetInputs()
+                setCustomName('')
+                setShowCustomModal(false)
               }}
-              className="w-full bg-accent text-bg font-bold rounded-2xl py-4 text-base"
+              disabled={!customName.trim()}
+              className="w-full bg-accent disabled:opacity-40 text-bg font-bold rounded-2xl py-4 text-base active:scale-95 transition-all"
             >
               追加する
             </button>
