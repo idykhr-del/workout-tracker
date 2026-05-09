@@ -185,6 +185,7 @@ export default function RecordScreen({
   const [finishedSetCount,  setFinishedSetCount]  = useState(0)
   const [deleteConfirmId,   setDeleteConfirmId]   = useState<string | null>(null)
   const [toast,             setToast]             = useState('')
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
 
   // ── Derived ───────────────────────────────────────────────────────
   /** カスタム有酸素種目（非有酸素カテゴリに登録されたカーディオタイプ）か */
@@ -465,6 +466,17 @@ export default function RecordScreen({
     const note: SessionNote = { score: noteScore, text: noteText.trim(), timestamp: new Date().toISOString() }
     updateSession({ ...session, notes: [...(session.notes ?? []), note] })
     setNoteText(''); setNoteScore(5)
+  }
+
+  // ── Cancel ────────────────────────────────────────────────────────
+  const cancelWorkout = () => {
+    clearDraft()
+    updateSession(newSession())
+    setIsWorkoutStarted(false)
+    setShowCancelConfirm(false)
+    setFinishMemo('')
+    setRating(7)
+    setUseCustomDateTime(false)
   }
 
   // ── Finish ────────────────────────────────────────────────────────
@@ -978,13 +990,21 @@ export default function RecordScreen({
       {/* ── Footer button ── */}
       <div className="px-4 py-3 border-t border-border bg-bg">
         {isWorkoutStarted ? (
-          <button
-            onClick={() => { if (totalSets > 0) setShowFinishModal(true) }}
-            disabled={totalSets === 0}
-            className="w-full bg-accentGreen/90 disabled:opacity-30 text-bg font-bold rounded-2xl py-4 text-base transition-all active:scale-95 shadow-lg shadow-accentGreen/20"
-          >
-            ワークアウトを終了する 💪
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowCancelConfirm(true)}
+              className="w-16 bg-red-500/15 border border-red-500/30 text-red-400 font-bold rounded-2xl py-4 text-sm transition-all active:scale-95 shrink-0"
+            >
+              🗑️
+            </button>
+            <button
+              onClick={() => { if (totalSets > 0) setShowFinishModal(true) }}
+              disabled={totalSets === 0}
+              className="flex-1 bg-accentGreen/90 disabled:opacity-30 text-bg font-bold rounded-2xl py-4 text-base transition-all active:scale-95 shadow-lg shadow-accentGreen/20"
+            >
+              ワークアウトを終了する 💪
+            </button>
+          </div>
         ) : (
           <button
             onClick={startWorkout}
@@ -1042,6 +1062,34 @@ export default function RecordScreen({
               className="w-full bg-accent text-bg font-bold rounded-2xl py-4 text-base active:scale-95 transition-all">
               保存する ✓
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cancel confirm modal ── */}
+      {showCancelConfirm && (
+        <div className="fixed inset-0 z-40 flex items-end">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowCancelConfirm(false)} />
+          <div className="relative w-full bg-surface rounded-t-3xl px-4 pt-6 pb-8 slide-in">
+            <div className="w-10 h-1 bg-border rounded-full mx-auto mb-6" />
+            <div className="text-lg font-bold text-white mb-2 text-center">⚠️ ワークアウトをキャンセル</div>
+            <div className="text-sm text-muted text-center mb-6 leading-relaxed">
+              現在の記録はすべて破棄されます。<br />この操作は取り消せません。
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={cancelWorkout}
+                className="flex-1 bg-red-500 text-white font-bold rounded-xl py-4 text-sm active:scale-95 transition-all"
+              >
+                破棄する
+              </button>
+              <button
+                onClick={() => setShowCancelConfirm(false)}
+                className="flex-1 bg-card text-muted border border-border rounded-xl py-4 text-sm"
+              >
+                続ける
+              </button>
+            </div>
           </div>
         </div>
       )}

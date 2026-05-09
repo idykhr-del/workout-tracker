@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { WorkoutData, WorkoutSession } from '../types'
 import type { Category } from '../types'
-import { CATEGORY_ICONS } from '../data/exercises'
+import { CATEGORY_ICONS, CATEGORIES, DEFAULT_EXERCISES } from '../data/exercises'
 
 interface Props {
   data: WorkoutData
@@ -188,6 +188,11 @@ function SessionCard({
   )
 }
 
+const LAT_PULLDOWN_GRIPS_CAL = [
+  'ベントバー','ミドルパラレルグリップ','ミドルオーバーグリップ','ミドルアンダーグリップ',
+  'ナローパラレルグリップ','ナローオーバーグリップ','ナローアンダーグリップ','ワイドグリップ',
+]
+
 // ── Edit: session edit card ────────────────────────────────────────────────────
 
 function EditSessionCard({
@@ -196,17 +201,75 @@ function EditSessionCard({
   onUpdateSet,
   onDeleteSet,
   onDeleteExercise,
+  onUpdateExercise,
+  onAddSet,
+  onAddExercise,
   onSave,
   onCancel,
+  allExercises,
 }: {
   editState: EditState
   onChange: (patch: Partial<EditState>) => void
   onUpdateSet: (exIdx: number, setIdx: number, field: keyof EditSet, value: string) => void
   onDeleteSet: (exIdx: number, setIdx: number) => void
   onDeleteExercise: (exIdx: number) => void
+  onUpdateExercise: (exIdx: number, field: 'name' | 'category', value: string) => void
+  onAddSet: (exIdx: number, newSet: EditSet) => void
+  onAddExercise: (ex: EditExercise) => void
   onSave: () => void
   onCancel: () => void
+  allExercises: Record<Category, string[]>
 }) {
+  // ── Local state for add-set form ────────────────────────────────
+  const [addSetOpenIdx,   setAddSetOpenIdx]   = useState<number | null>(null)
+  const [addSetWeight,    setAddSetWeight]    = useState('')
+  const [addSetReps,      setAddSetReps]      = useState('')
+  const [addSetDuration,  setAddSetDuration]  = useState('')
+  const [addSetDistance,  setAddSetDistance]  = useState('')
+  const [addSetIncline,   setAddSetIncline]   = useState('')
+
+  // ── Local state for add-exercise form ────────────────────────────
+  const [addExOpen, setAddExOpen] = useState(false)
+  const [addExCat,  setAddExCat]  = useState<Category>('胸')
+  const [addExName, setAddExName] = useState(allExercises['胸']?.[0] ?? '')
+
+  const openAddSet = (exIdx: number) => {
+    setAddSetOpenIdx(exIdx)
+    setAddSetWeight(''); setAddSetReps(''); setAddSetDuration('')
+    setAddSetDistance(''); setAddSetIncline('')
+  }
+
+  const commitAddSet = (exIdx: number) => {
+    onAddSet(exIdx, {
+      id: crypto.randomUUID(),
+      weight: addSetWeight,
+      reps: addSetReps,
+      durationMinutes: addSetDuration,
+      distanceKm: addSetDistance,
+      incline: addSetIncline,
+      grip: '',
+      memo: '',
+      timestamp: new Date().toISOString(),
+    })
+    setAddSetOpenIdx(null)
+  }
+
+  const commitAddExercise = () => {
+    onAddExercise({
+      category: addExCat,
+      name: addExName,
+      instanceId: crypto.randomUUID(),
+      sets: [{
+        id: crypto.randomUUID(),
+        weight: '', reps: '', durationMinutes: '', distanceKm: '',
+        incline: '', grip: '', memo: '', timestamp: new Date().toISOString(),
+      }],
+    })
+    setAddExOpen(false)
+    setAddExCat('胸')
+    setAddExName(allExercises['胸']?.[0] ?? '')
+  }
+
   return (
     <div className="bg-card border border-accent/40 rounded-2xl overflow-hidden">
       {/* Edit header */}
@@ -274,107 +337,230 @@ function EditSessionCard({
 
       {/* Exercises */}
       <div className="divide-y divide-border/60">
-        {editState.exercises.map((ex, exIdx) => (
-          <div key={`${ex.name}-${exIdx}`} className="px-4 py-3">
-            {/* Exercise header */}
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-white">{ex.name}</span>
-                <CategoryBadge category={ex.category} />
+        {editState.exercises.map((ex, exIdx) => {
+          const isCardio = ex.category === '有酸素'
+          return (
+            <div key={`${ex.name}-${exIdx}`} className="px-4 py-3">
+              {/* Exercise header — editable name & category */}
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-1 flex gap-1.5">
+                  <select
+                    value={ex.category}
+                    onChange={e => onUpdateExercise(exIdx, 'category', e.target.value)}
+                    className="w-20 bg-surface border border-border rounded-lg px-1.5 py-1.5 text-white text-xs appearance-none shrink-0"
+                  >
+                    {CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{CATEGORY_ICONS[cat]} {cat}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={ex.name}
+                    onChange={e => onUpdateExercise(exIdx, 'name', e.target.value)}
+                    className="flex-1 bg-surface border border-border rounded-lg px-2 py-1.5 text-white text-xs appearance-none"
+                  >
+                    {(allExercises[ex.category] ?? []).map(n => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => onDeleteExercise(exIdx)}
+                  className="text-xs text-red-400 border border-red-500/30 bg-red-500/10 rounded-lg px-2 py-1.5 shrink-0"
+                >
+                  × 削除
+                </button>
               </div>
-              <button
-                onClick={() => onDeleteExercise(exIdx)}
-                className="text-xs text-red-400 border border-red-500/30 bg-red-500/10 rounded-lg px-2 py-1"
-              >
-                × 削除
-              </button>
-            </div>
 
-            {/* Sets */}
-            <div className="space-y-2">
-              {ex.sets.map((set, setIdx) => (
-                <div key={set.id} className="bg-surface/50 rounded-xl p-2">
-                  <div className="flex items-center gap-1 mb-1.5">
-                    <span className="text-xs text-muted w-10 shrink-0">S{setIdx + 1}</span>
-                    {ex.category === '有酸素' ? (
-                      <div className="flex gap-1 flex-1">
-                        <input
-                          type="number" inputMode="decimal" placeholder="分"
-                          value={set.durationMinutes}
-                          onChange={e => onUpdateSet(exIdx, setIdx, 'durationMinutes', e.target.value)}
-                          className="w-14 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
-                        />
+              {/* Sets */}
+              <div className="space-y-2">
+                {ex.sets.map((set, setIdx) => (
+                  <div key={set.id} className="bg-surface/50 rounded-xl p-2">
+                    <div className="flex items-center gap-1 mb-1.5">
+                      <span className="text-xs text-muted w-10 shrink-0">S{setIdx + 1}</span>
+                      {isCardio ? (
+                        <div className="flex gap-1 flex-1">
+                          <input
+                            type="number" inputMode="decimal" placeholder="分"
+                            value={set.durationMinutes}
+                            onChange={e => onUpdateSet(exIdx, setIdx, 'durationMinutes', e.target.value)}
+                            className="w-14 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
+                          />
+                          <span className="text-muted text-xs self-center">分</span>
+                          <input
+                            type="number" inputMode="decimal" placeholder="km"
+                            value={set.distanceKm}
+                            onChange={e => onUpdateSet(exIdx, setIdx, 'distanceKm', e.target.value)}
+                            className="w-14 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
+                          />
+                          <span className="text-muted text-xs self-center">km</span>
+                          {ex.name === 'ウォーキング' && (
+                            <>
+                              <input
+                                type="number" inputMode="decimal" placeholder="%"
+                                value={set.incline}
+                                onChange={e => onUpdateSet(exIdx, setIdx, 'incline', e.target.value)}
+                                className="w-12 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
+                              />
+                              <span className="text-muted text-xs self-center">%</span>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex gap-1 flex-1">
+                          <input
+                            type="number" inputMode="decimal" placeholder="kg"
+                            value={set.weight}
+                            onChange={e => onUpdateSet(exIdx, setIdx, 'weight', e.target.value)}
+                            className="w-16 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
+                          />
+                          <span className="text-muted text-xs self-center">kg×</span>
+                          <input
+                            type="number" inputMode="numeric" placeholder="回"
+                            value={set.reps}
+                            onChange={e => onUpdateSet(exIdx, setIdx, 'reps', e.target.value)}
+                            className="w-14 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
+                          />
+                          <span className="text-muted text-xs self-center">回</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => onDeleteSet(exIdx, setIdx)}
+                        className="text-red-400 text-sm w-7 h-7 flex items-center justify-center shrink-0"
+                      >×</button>
+                    </div>
+                    {/* Grip (ラットプルダウンのみ) */}
+                    {ex.name === 'ラットプルダウン' && (
+                      <select
+                        value={set.grip}
+                        onChange={e => onUpdateSet(exIdx, setIdx, 'grip', e.target.value)}
+                        className="w-full bg-bg border border-border rounded-lg px-2 py-1 text-white text-xs mb-1.5 appearance-none"
+                      >
+                        <option value="">グリップ未選択</option>
+                        {LAT_PULLDOWN_GRIPS_CAL.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
+                    )}
+                    {/* Set memo */}
+                    <input
+                      type="text" placeholder="セットメモ（任意）"
+                      value={set.memo}
+                      onChange={e => onUpdateSet(exIdx, setIdx, 'memo', e.target.value)}
+                      className="w-full bg-bg border border-border rounded-lg px-2 py-1 text-white text-xs"
+                    />
+                  </div>
+                ))}
+                {ex.sets.length === 0 && (
+                  <div className="text-xs text-muted text-center py-1">セットがありません</div>
+                )}
+
+                {/* Add set form */}
+                {addSetOpenIdx === exIdx ? (
+                  <div className="bg-accent/5 border border-accent/30 rounded-xl p-2 slide-in">
+                    <div className="text-[10px] text-accent font-bold mb-1.5">＋ セットを追加</div>
+                    {isCardio ? (
+                      <div className="flex gap-1 mb-1.5">
+                        <input type="number" inputMode="decimal" placeholder="分"
+                          value={addSetDuration} onChange={e => setAddSetDuration(e.target.value)}
+                          className="w-16 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center" />
                         <span className="text-muted text-xs self-center">分</span>
-                        <input
-                          type="number" inputMode="decimal" placeholder="km"
-                          value={set.distanceKm}
-                          onChange={e => onUpdateSet(exIdx, setIdx, 'distanceKm', e.target.value)}
-                          className="w-14 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
-                        />
+                        <input type="number" inputMode="decimal" placeholder="km"
+                          value={addSetDistance} onChange={e => setAddSetDistance(e.target.value)}
+                          className="w-16 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center" />
                         <span className="text-muted text-xs self-center">km</span>
                         {ex.name === 'ウォーキング' && (
                           <>
-                            <input
-                              type="number" inputMode="decimal" placeholder="%"
-                              value={set.incline}
-                              onChange={e => onUpdateSet(exIdx, setIdx, 'incline', e.target.value)}
-                              className="w-12 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
-                            />
+                            <input type="number" inputMode="decimal" placeholder="%"
+                              value={addSetIncline} onChange={e => setAddSetIncline(e.target.value)}
+                              className="w-12 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center" />
                             <span className="text-muted text-xs self-center">%</span>
                           </>
                         )}
                       </div>
                     ) : (
-                      <div className="flex gap-1 flex-1">
-                        <input
-                          type="number" inputMode="decimal" placeholder="kg"
-                          value={set.weight}
-                          onChange={e => onUpdateSet(exIdx, setIdx, 'weight', e.target.value)}
-                          className="w-16 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
-                        />
+                      <div className="flex gap-1 mb-1.5">
+                        <input type="number" inputMode="decimal" placeholder="kg"
+                          value={addSetWeight} onChange={e => setAddSetWeight(e.target.value)}
+                          className="w-16 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center" />
                         <span className="text-muted text-xs self-center">kg×</span>
-                        <input
-                          type="number" inputMode="numeric" placeholder="回"
-                          value={set.reps}
-                          onChange={e => onUpdateSet(exIdx, setIdx, 'reps', e.target.value)}
-                          className="w-14 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center"
-                        />
+                        <input type="number" inputMode="numeric" placeholder="回"
+                          value={addSetReps} onChange={e => setAddSetReps(e.target.value)}
+                          className="w-16 bg-bg border border-border rounded-lg px-1.5 py-1 text-white text-xs text-center" />
                         <span className="text-muted text-xs self-center">回</span>
                       </div>
                     )}
-                    <button
-                      onClick={() => onDeleteSet(exIdx, setIdx)}
-                      className="text-red-400 text-sm w-7 h-7 flex items-center justify-center shrink-0"
-                    >×</button>
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => commitAddSet(exIdx)}
+                        disabled={isCardio ? !addSetDuration : !addSetWeight || !addSetReps}
+                        className="flex-1 bg-accent disabled:opacity-40 text-bg text-xs font-bold rounded-lg py-1.5"
+                      >追加する</button>
+                      <button
+                        onClick={() => setAddSetOpenIdx(null)}
+                        className="flex-1 bg-card text-muted border border-border text-xs rounded-lg py-1.5"
+                      >キャンセル</button>
+                    </div>
                   </div>
-                  {/* Grip (ラットプルダウンのみ) */}
-                  {ex.name === 'ラットプルダウン' && (
-                    <select
-                      value={set.grip}
-                      onChange={e => onUpdateSet(exIdx, setIdx, 'grip', e.target.value)}
-                      className="w-full bg-bg border border-border rounded-lg px-2 py-1 text-white text-xs mb-1.5 appearance-none"
-                    >
-                      <option value="">グリップ未選択</option>
-                      {['ベントバー','ミドルパラレルグリップ','ミドルオーバーグリップ','ミドルアンダーグリップ',
-                        'ナローパラレルグリップ','ナローオーバーグリップ','ナローアンダーグリップ','ワイドグリップ'
-                      ].map(g => <option key={g} value={g}>{g}</option>)}
-                    </select>
-                  )}
-                  {/* Set memo */}
-                  <input
-                    type="text" placeholder="セットメモ（任意）"
-                    value={set.memo}
-                    onChange={e => onUpdateSet(exIdx, setIdx, 'memo', e.target.value)}
-                    className="w-full bg-bg border border-border rounded-lg px-2 py-1 text-white text-xs"
-                  />
-                </div>
-              ))}
-              {ex.sets.length === 0 && (
-                <div className="text-xs text-muted text-center py-1">セットがありません</div>
-              )}
+                ) : (
+                  <button
+                    onClick={() => openAddSet(exIdx)}
+                    className="w-full text-xs text-accent border border-accent/30 bg-accent/5 rounded-xl py-1.5 mt-1 active:scale-95 transition-all"
+                  >
+                    ＋ セットを追加
+                  </button>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Add exercise section */}
+      <div className="px-4 py-3 border-t border-border/60">
+        {addExOpen ? (
+          <div className="bg-accentGreen/5 border border-accentGreen/30 rounded-xl p-3 slide-in">
+            <div className="text-[10px] text-accentGreen font-bold mb-2">＋ 種目を追加</div>
+            <div className="flex gap-1.5 mb-2">
+              <select
+                value={addExCat}
+                onChange={e => {
+                  const cat = e.target.value as Category
+                  setAddExCat(cat)
+                  setAddExName(allExercises[cat]?.[0] ?? '')
+                }}
+                className="w-24 bg-bg border border-border rounded-lg px-1.5 py-1.5 text-white text-xs appearance-none shrink-0"
+              >
+                {CATEGORIES.map(cat => (
+                  <option key={cat} value={cat}>{CATEGORY_ICONS[cat]} {cat}</option>
+                ))}
+              </select>
+              <select
+                value={addExName}
+                onChange={e => setAddExName(e.target.value)}
+                className="flex-1 bg-bg border border-border rounded-lg px-2 py-1.5 text-white text-xs appearance-none"
+              >
+                {(allExercises[addExCat] ?? []).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-1.5">
+              <button
+                onClick={commitAddExercise}
+                className="flex-1 bg-accentGreen text-bg text-xs font-bold rounded-lg py-1.5"
+              >追加する</button>
+              <button
+                onClick={() => setAddExOpen(false)}
+                className="flex-1 bg-card text-muted border border-border text-xs rounded-lg py-1.5"
+              >キャンセル</button>
             </div>
           </div>
-        ))}
+        ) : (
+          <button
+            onClick={() => { setAddExOpen(true); setAddExCat('胸'); setAddExName(allExercises['胸']?.[0] ?? '') }}
+            className="w-full text-xs text-accentGreen border border-accentGreen/30 bg-accentGreen/5 rounded-xl py-2 active:scale-95 transition-all"
+          >
+            ＋ 種目を追加
+          </button>
+        )}
       </div>
 
       {/* Save / Cancel */}
@@ -536,6 +722,54 @@ export default function CalendarScreen({ data, onUpdateSession }: Props) {
     })
   }
 
+  const updateExercise = (exIdx: number, field: 'name' | 'category', value: string) => {
+    setEditState(prev => {
+      if (!prev) return prev
+      const exercises = prev.exercises.map((ex, i) => {
+        if (i !== exIdx) return ex
+        if (field === 'category') {
+          const cat = value as Category
+          const firstName = [
+            ...DEFAULT_EXERCISES[cat],
+            ...data.customExercises.filter(c => c.category === cat).map(c => c.name),
+          ][0] ?? ''
+          return { ...ex, category: cat, name: firstName }
+        }
+        return { ...ex, name: value }
+      })
+      return { ...prev, exercises }
+    })
+  }
+
+  const addSetToExercise = (exIdx: number, newSet: EditSet) => {
+    setEditState(prev => {
+      if (!prev) return prev
+      const exercises = prev.exercises.map((ex, i) =>
+        i === exIdx ? { ...ex, sets: [...ex.sets, newSet] } : ex
+      )
+      return { ...prev, exercises }
+    })
+  }
+
+  const addExerciseToSession = (ex: EditExercise) => {
+    setEditState(prev => {
+      if (!prev) return prev
+      return { ...prev, exercises: [...prev.exercises, ex] }
+    })
+  }
+
+  // allExercises: merged DEFAULT + custom per category (for dropdowns in EditSessionCard)
+  const allExercises = useMemo(() => {
+    const result = {} as Record<Category, string[]>
+    for (const cat of CATEGORIES) {
+      result[cat] = [
+        ...DEFAULT_EXERCISES[cat],
+        ...data.customExercises.filter(c => c.category === cat).map(c => c.name),
+      ]
+    }
+    return result
+  }, [data.customExercises])
+
   // ── Calendar navigation ────────────────────────────────────────────
   const goPrev = () => {
     if (month === 0) { setYear(y => y - 1); setMonth(11) }
@@ -668,8 +902,12 @@ export default function CalendarScreen({ data, onUpdateSession }: Props) {
                   onUpdateSet={updateEditSet}
                   onDeleteSet={deleteEditSet}
                   onDeleteExercise={deleteEditExercise}
+                  onUpdateExercise={updateExercise}
+                  onAddSet={addSetToExercise}
+                  onAddExercise={addExerciseToSession}
                   onSave={saveEditing}
                   onCancel={cancelEditing}
+                  allExercises={allExercises}
                 />
               ) : (
                 <SessionCard
