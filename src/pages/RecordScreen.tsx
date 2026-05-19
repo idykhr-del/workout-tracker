@@ -53,6 +53,13 @@ function nowTimeStr(): string {
   return new Date().toTimeString().slice(0, 5)
 }
 
+/** "2026-04-29" → "4月29日" */
+function formatDateMD(dateStr: string): string {
+  const parts = dateStr.split('-')
+  if (parts.length < 3) return dateStr
+  return `${parseInt(parts[1])}月${parseInt(parts[2])}日`
+}
+
 function newSession(): WorkoutSession {
   return { id: crypto.randomUUID(), date: todayStr(), startTime: '', exercises: [], notes: [] }
 }
@@ -75,13 +82,13 @@ function sortByUsage(names: string[], category: string, usage: UsageMap): string
   return [...names].sort((a, b) => (usage[`${category}/${b}`] ?? 0) - (usage[`${category}/${a}`] ?? 0))
 }
 
-/** Returns all sets from the most recent session (≠ current) that logged this exercise. */
-function getPreviousSets(
+/** Returns sets + date from the most recent session (≠ current) that logged this exercise. */
+function getPreviousEntry(
   sessions: WorkoutSession[],
   currentId: string,
   category: string,
   name: string,
-): WorkoutSet[] | null {
+): { sets: WorkoutSet[]; date: string } | null {
   const sorted = [...sessions]
     .filter(s => s.id !== currentId)
     .sort((a, b) => b.date.localeCompare(a.date) || (b.startTime ?? '').localeCompare(a.startTime ?? ''))
@@ -89,7 +96,7 @@ function getPreviousSets(
     const allSets = s.exercises
       .filter(e => e.category === category && e.name === name)
       .flatMap(e => e.sets)
-    if (allSets.length > 0) return allSets
+    if (allSets.length > 0) return { sets: allSets, date: s.date }
   }
   return null
 }
@@ -116,6 +123,86 @@ function computePRs(session: WorkoutSession, allSessions: WorkoutSession[]): PRI
       prs.push({ name: ex.name, prevAvg: Math.round(bestHist), newAvg: Math.round(curAvg) })
   }
   return prs
+}
+
+// ── PR Target Calculator ─────────────────────────────────────────────
+
+interface PRTargetResult {
+  type: 'no_history' | 'achieved' | 'target' | 'too_hard'
+  bestAvg?: number
+  targetAvg?: number
+  currentAvg?: number
+  remainingSets?: number
+  neededWeight?: number
+  neededReps?: number
+}
+
+const PR_TARGET_SETS = 3
+
+function roundTo2_5(n: number): number {
+  return Math.round(n / 2.5) * 2.5
+}
+
+function computePRTarget(
+  sessions: WorkoutSession[],
+  currentSessionId: string,
+  category: Category,
+  name: string,
+  currentSets: WorkoutSet[],
+): PRTargetResult {
+  if (category === '有酸素') return { type: 'too_hard' }
+
+  const history = sessions.filter(s => s.id !== currentSessionId)
+  let bestAvg = 0
+  let prevBestWeight = 0
+  let prevBestReps = 10
+
+  for (const s of history) {
+    for (const ex of s.exercises.filter(e => e.category === category && e.name === name)) {
+      const valid = ex.sets.filter(s => (s.weight ?? 0) > 0 && (s.reps ?? 0) > 0)
+      if (!valid.length) continue
+      const avg = valid.reduce((sum, s) => sum + s.weight! * s.reps!, 0) / valid.length
+      if (avg > bestAvg) {
+        bestAvg = avg
+        const last = valid[valid.length - 1]
+        prevBestWeight = last.weight!
+        prevBestReps = last.reps!
+      }
+    }
+  }
+
+  if (bestAvg === 0) return { type: 'no_history' }
+
+  const validCurrent = currentSets.filter(s => (s.weight ?? 0) > 0 && (s.reps ?? 0) > 0)
+  const currentTotalLoad = validCurrent.reduce((sum, s) => sum + s.weight! * s.reps!, 0)
+  const currentAvg = validCurrent.length > 0 ? currentTotalLoad / validCurrent.length : 0
+
+  const targetAvg = bestAvg + 1
+  const targetTotalLoad = targetAvg * PR_TARGET_SETS
+  const remainingSets = Math.max(0, PR_TARGET_SETS - validCurrent.length)
+
+  // Already achieved (≥ PR_TARGET_SETS sets and avg exceeds best)
+  if (validCurrent.length >= PR_TARGET_SETS && currentAvg > bestAvg) {
+    return { type: 'achieved', bestAvg, targetAvg, currentAvg }
+  }
+
+  // 3 sets done but didn't beat the record
+  if (remainingSets === 0) {
+    return { type: 'too_hard', bestAvg, currentAvg }
+  }
+
+  const refReps = validCurrent.length > 0
+    ? validCurrent[validCurrent.length - 1].reps!
+    : prevBestReps
+  const neededPerSet = (targetTotalLoad - currentTotalLoad) / remainingSets
+  const neededWeight = roundTo2_5(neededPerSet / refReps)
+
+  // Unrealistic if needed weight is >20% above historical best
+  if (neededWeight > prevBestWeight * 1.2 || neededWeight <= 0) {
+    return { type: 'too_hard', bestAvg, currentAvg }
+  }
+
+  return { type: 'target', bestAvg, targetAvg, currentAvg, remainingSets, neededWeight, neededReps: refReps }
 }
 
 function formatElapsed(sec: number): string {
@@ -242,8 +329,8 @@ export default function RecordScreen({
     ...customExercises.filter(c => c.category === cat).map(c => c.name),
   ]
 
-  const previousSets = useMemo(
-    () => getPreviousSets(sessions, session.id, selectedCategory, selectedExercise),
+  const previousEntry = useMemo(
+    () => getPreviousEntry(sessions, session.id, selectedCategory, selectedExercise),
     [sessions, session.id, selectedCategory, selectedExercise],
   )
 
@@ -256,6 +343,11 @@ export default function RecordScreen({
 
   /** 現在選択中の種目の今日の合計カロリー */
   const currentExerciseCalories = currentSets.reduce((sum, s) => sum + (s.calories ?? 0), 0)
+
+  /** PRターゲット計算（筋トレ種目のみ） */
+  const prTarget = !isCardio
+    ? computePRTarget(sessions, session.id, selectedCategory, selectedExercise, currentSets)
+    : null
 
   const currentExerciseLabel = useMemo(() => {
     const same = session.exercises.filter(e => e.name === selectedExercise)
@@ -704,20 +796,59 @@ export default function RecordScreen({
             </div>
 
             {/* Previous sets list */}
-            {previousSets && (
+            {previousEntry && (
               <div className="px-4 mt-1.5">
                 <div className="text-[11px] text-muted/70 mb-0.5">
-                  前回 ({previousSets.length}セット):
+                  前回（{formatDateMD(previousEntry.date)}）：
                 </div>
                 <div className="space-y-0.5 pl-1">
-                  {previousSets.map((set, i) => (
-                    <div key={i} className="text-xs text-muted">
-                      {isCardio
-                        ? `${set.durationMinutes ?? 0}分${set.distanceKm ? ` × ${set.distanceKm}km` : ''}`
-                        : `${set.weight ?? 0}kg × ${set.reps ?? 0}回`}
-                      {set.grip && <span className="text-muted/60"> ({set.grip})</span>}
+                  {previousEntry.sets.map((set, i) => (
+                    <div key={i} className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs text-muted">
+                        {isCardio
+                          ? `${set.durationMinutes ?? 0}分${set.distanceKm ? ` × ${set.distanceKm}km` : ''}`
+                          : `${set.weight ?? 0}kg × ${set.reps ?? 0}回`}
+                        {set.grip && <span className="text-muted/60"> ({set.grip})</span>}
+                      </span>
+                      {set.memo && (
+                        <span className="text-[10px] text-muted/50">※{set.memo}</span>
+                      )}
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* PR target display */}
+            {isWorkoutStarted && prTarget && prTarget.type !== 'too_hard' && (
+              <div className="px-4 mt-1">
+                {prTarget.type === 'no_history' && (
+                  <div className="text-[11px] text-accent/80 bg-accent/5 border border-accent/20 rounded-xl px-3 py-1.5">
+                    🎯 初記録！このトレーニングが最初の記録になります
+                  </div>
+                )}
+                {prTarget.type === 'achieved' && (
+                  <div className="text-[11px] text-accentGreen font-bold bg-accentGreen/10 border border-accentGreen/30 rounded-xl px-3 py-1.5 animate-pulse">
+                    ✅ 記録更新達成！平均負荷 {Math.round(prTarget.currentAvg!)}（前回 {Math.round(prTarget.bestAvg!)}）
+                  </div>
+                )}
+                {prTarget.type === 'target' && prTarget.remainingSets === PR_TARGET_SETS && (
+                  <div className="text-[11px] text-accent/80 bg-accent/5 border border-accent/20 rounded-xl px-3 py-1.5">
+                    🎯 記録更新ライン：平均負荷 {Math.ceil(prTarget.targetAvg!)}
+                    <span className="text-muted/70 ml-1">（例：{prTarget.neededWeight}kg × {prTarget.neededReps}回 × {PR_TARGET_SETS}セット）</span>
+                  </div>
+                )}
+                {prTarget.type === 'target' && prTarget.remainingSets !== undefined && prTarget.remainingSets < PR_TARGET_SETS && (
+                  <div className="text-[11px] text-accent font-semibold bg-accent/5 border border-accent/20 rounded-xl px-3 py-1.5">
+                    🎯 あと{prTarget.remainingSets}セット：{prTarget.neededWeight}kg × {prTarget.neededReps}回で記録更新
+                  </div>
+                )}
+              </div>
+            )}
+            {isWorkoutStarted && prTarget?.type === 'too_hard' && (
+              <div className="px-4 mt-1">
+                <div className="text-[11px] text-muted/60 bg-surface/50 border border-border/60 rounded-xl px-3 py-1.5">
+                  💪 現在のペースで継続中
                 </div>
               </div>
             )}
