@@ -38,6 +38,7 @@ export default function App() {
 
   const {
     data,
+    isNotionLoading,
     saveSession,
     addCustomExercise,
     deleteCustomExercise,
@@ -93,6 +94,23 @@ export default function App() {
         <div className="text-accent text-lg">🏋️</div>
       </header>
 
+      {/* Notion loading skeleton — shown only when localStorage was empty */}
+      {isNotionLoading && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-bg gap-3">
+          <div className="text-3xl animate-pulse">🏋️</div>
+          <div className="text-sm text-muted animate-pulse">Notionからデータを読み込み中…</div>
+          <div className="flex gap-1.5 mt-1">
+            {[0,1,2].map(i => (
+              <div
+                key={i}
+                className="w-2 h-2 rounded-full bg-accent/60"
+                style={{ animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Page content */}
       <main className="flex-1 overflow-hidden relative">
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'record' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
@@ -125,6 +143,7 @@ export default function App() {
             onAgeChange={handleAgeChange}
             restSeconds={restSeconds}
             onRestSecondsChange={handleRestSecondsChange}
+            isNotionLoading={isNotionLoading}
           />
         </div>
       </main>

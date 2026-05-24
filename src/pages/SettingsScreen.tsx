@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { WorkoutData } from '../types'
+import { migrateAllSessions, hasMigrated, markMigrated } from '../utils/notionSync'
 
 interface Props {
   data: WorkoutData
@@ -11,6 +12,7 @@ interface Props {
   onAgeChange: (age: number) => void
   restSeconds: number
   onRestSecondsChange: (sec: number) => void
+  isNotionLoading?: boolean
 }
 
 function downloadCSV(data: WorkoutData) {
@@ -70,12 +72,35 @@ export default function SettingsScreen({
   bodyWeight, onBodyWeightChange,
   age, onAgeChange,
   restSeconds, onRestSecondsChange,
+  isNotionLoading,
 }: Props) {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [shareToast, setShareToast] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<{ category: string; name: string } | null>(null)
   const [weightInput, setWeightInput] = useState(String(bodyWeight))
   const [ageInput, setAgeInput] = useState(String(age))
+
+  // Notion migration state
+  const [migrating,    setMigrating]    = useState(false)
+  const [migrationDone, setMigrationDone] = useState(hasMigrated())
+  const [migProgress,  setMigProgress]  = useState(0)   // 0–100
+  const [migResult,    setMigResult]    = useState<{ success: number; errors: number } | null>(null)
+
+  const handleMigrate = async () => {
+    if (migrating || data.sessions.length === 0) return
+    setMigrating(true)
+    setMigProgress(0)
+    setMigResult(null)
+    const result = await migrateAllSessions(data.sessions, (done, total) => {
+      setMigProgress(Math.round((done / total) * 100))
+    })
+    setMigResult(result)
+    setMigrating(false)
+    if (result.errors === 0) {
+      markMigrated()
+      setMigrationDone(true)
+    }
+  }
 
   const totalSessions = data.sessions.length
   const totalSets = data.sessions.reduce(
@@ -159,6 +184,71 @@ export default function SettingsScreen({
             <div className="text-xs text-muted">
               全種目（筋トレ・有酸素）の消費カロリー計算に使用します
             </div>
+          </div>
+        </div>
+
+        {/* Notion sync */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="text-xs text-muted mb-3 font-medium uppercase tracking-wider">Notion 連携</div>
+
+          {/* Sync status */}
+          <div className="flex items-center gap-2 mb-3">
+            {isNotionLoading ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse shrink-0" />
+                <span className="text-xs text-yellow-400">Notionからデータ読み込み中…</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2 h-2 rounded-full bg-accentGreen shrink-0" />
+                <span className="text-xs text-accentGreen">Notion同期: 有効（自動）</span>
+              </>
+            )}
+          </div>
+          <p className="text-xs text-muted mb-3 leading-relaxed">
+            ワークアウト保存・編集時に自動でNotionへ書き込みます。
+            別端末のデータを取り込むには再読み込みしてください。
+          </p>
+
+          {/* Migration */}
+          <div className="border border-border rounded-xl p-3 bg-surface/50">
+            <div className="text-xs font-semibold text-white mb-1">
+              📦 既存データをNotionへ一括移行
+            </div>
+            <div className="text-xs text-muted mb-3 leading-relaxed">
+              localStorage内の全ワークアウト（{data.sessions.length}件）をNotionにコピーします。
+              {migrationDone && ' ✅ 移行済み'}
+            </div>
+
+            {migrating ? (
+              <>
+                <div className="w-full bg-border rounded-full h-2 mb-1.5 overflow-hidden">
+                  <div
+                    className="bg-accent h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${migProgress}%` }}
+                  />
+                </div>
+                <div className="text-xs text-muted text-center">{migProgress}% 完了…</div>
+              </>
+            ) : migResult ? (
+              <div className={`text-xs font-semibold text-center py-1 rounded-lg ${
+                migResult.errors === 0
+                  ? 'text-accentGreen bg-accentGreen/10'
+                  : 'text-yellow-400 bg-yellow-500/10'
+              }`}>
+                {migResult.errors === 0
+                  ? `✅ 移行完了 — ${migResult.success}件成功`
+                  : `⚠ ${migResult.success}件成功 / ${migResult.errors}件エラー`}
+              </div>
+            ) : (
+              <button
+                onClick={handleMigrate}
+                disabled={data.sessions.length === 0 || migrationDone}
+                className="w-full bg-accent disabled:opacity-40 text-bg text-xs font-bold rounded-xl py-2.5 active:scale-95 transition-all"
+              >
+                {migrationDone ? '移行済み ✓' : 'Notionへ移行する'}
+              </button>
+            )}
           </div>
         </div>
 
