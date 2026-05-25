@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { WorkoutData } from '../types'
-import { migrateAllSessions, hasMigrated, markMigrated } from '../utils/notionSync'
+import { migrateToNotion, hasMigrated, markMigrated } from '../utils/notionSync'
 
 interface Props {
   data: WorkoutData
@@ -92,7 +92,7 @@ export default function SettingsScreen({
     setMigProgress(0)
     setMigResult(null)        // reset previous result so progress bar shows
     setMigrationDone(false)   // allow re-run regardless of prior state
-    const result = await migrateAllSessions(data.sessions, (done, total) => {
+    const result = await migrateToNotion(data.sessions, (done, total) => {
       setMigProgress(Math.round((done / total) * 100))
     })
     setMigResult(result)

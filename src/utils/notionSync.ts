@@ -10,7 +10,8 @@
 
 import type { WorkoutData, WorkoutSession } from '../types'
 
-const API = '/api/notion/sessions'
+const API           = '/api/notion/sessions'
+const EXERCISES_API = '/api/notion/exercises'
 
 // ── Read ─────────────────────────────────────────────────────────────────────
 
@@ -101,52 +102,112 @@ export function markMigrated(): void {
 }
 
 /**
- * Push all sessions to Notion one-by-one, 800ms apart.
- * Calls onProgress(done, total) after each attempt.
+ * Migrate all sessions + exercise sets to Notion.
+ *
+ * Flow per session:
+ *   1. PUT session metadata (exercises: [] so the server only upserts the
+ *      session row and clears old exercise pages, but creates nothing new).
+ *   2. POST each exercise set individually to /api/notion/exercises,
+ *      waiting 300 ms between requests.
+ *   3. Wait 800 ms before the next session.
+ *
+ * Progress is reported as (done, total) where
+ *   total = sessions.length + Σ(all set counts)
+ *
+ * Errors never abort the loop — the result always reports success/error counts.
  */
-export async function migrateAllSessions(
+export async function migrateToNotion(
   sessions: WorkoutSession[],
   onProgress: (done: number, total: number) => void,
 ): Promise<MigrationResult> {
   let success = 0
   let errors  = 0
-  const total = sessions.length
+  let done    = 0
 
-  for (let i = 0; i < total; i++) {
+  const totalSets = sessions.reduce(
+    (sum, s) => sum + s.exercises.reduce((s2, e) => s2 + e.sets.length, 0), 0,
+  )
+  const total = sessions.length + totalSets
+  console.log(`[migrate] start — ${sessions.length} sessions, ${totalSets} sets, total=${total}`)
+
+  for (let i = 0; i < sessions.length; i++) {
     const s = sessions[i]
+
+    // ── 1. Upsert session record (exercises: [] keeps the server call fast) ──
     try {
       const res = await fetch(API, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ session: s }),
+        // Pass exercises: [] so the server only touches the session row and
+        // archives any stale exercise pages without creating new ones.
+        body: JSON.stringify({ session: { ...s, exercises: [] } }),
       })
       if (res.ok) {
         success++
-        console.log(`[migration] ✅ (${i + 1}/${total}) id=${s.id} date=${s.date}`)
+        console.log(
+          `[migrate] ✅ session (${i + 1}/${sessions.length}) id=${s.id} date=${s.date}`,
+        )
       } else {
         errors++
         let errBody: unknown = null
         try { errBody = await res.json() } catch { /* ignore */ }
         console.warn(
-          `[migration] ❌ (${i + 1}/${total}) HTTP ${res.status} — id=${s.id} date=${s.date}`,
-          errBody ?? `(no body)`,
+          `[migrate] ❌ session HTTP ${res.status} — id=${s.id} date=${s.date}`,
+          errBody ?? '(no body)',
         )
       }
     } catch (err) {
       errors++
-      console.error(
-        `[migration] ❌ (${i + 1}/${total}) network error — id=${s.id} date=${s.date}`,
-        err,
-      )
+      console.error(`[migrate] ❌ session network error — id=${s.id} date=${s.date}`, err)
     }
 
-    onProgress(i + 1, total)
+    done++
+    onProgress(done, total)
 
-    // Notion rate limit: wait 800ms between sessions to avoid 429
-    if (i < total - 1) await delay(800)
+    // ── 2. POST each exercise set ──────────────────────────────────────────
+    for (const ex of s.exercises) {
+      for (let j = 0; j < ex.sets.length; j++) {
+        // Wait 300 ms before each exercise POST (gives Notion time to breathe)
+        await delay(300)
+
+        const setLabel = `${ex.name} set${j + 1} (session ${s.id})`
+        try {
+          const res = await fetch(EXERCISES_API, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId:  s.id,
+              category:   ex.category,
+              name:       ex.name,
+              instanceId: ex.instanceId,
+              setNumber:  j + 1,
+              set:        ex.sets[j],
+              date:       s.date,
+            }),
+          })
+          if (res.ok) {
+            success++
+          } else {
+            errors++
+            let errBody: unknown = null
+            try { errBody = await res.json() } catch { /* ignore */ }
+            console.warn(`[migrate] ❌ exercise HTTP ${res.status} — ${setLabel}`, errBody ?? '(no body)')
+          }
+        } catch (err) {
+          errors++
+          console.error(`[migrate] ❌ exercise network error — ${setLabel}`, err)
+        }
+
+        done++
+        onProgress(done, total)
+      }
+    }
+
+    // ── 3. Wait 800 ms between sessions ───────────────────────────────────
+    if (i < sessions.length - 1) await delay(800)
   }
 
-  console.log(`[migration] done — success=${success} errors=${errors}`)
+  console.log(`[migrate] done — success=${success} errors=${errors} total=${total}`)
   return { success, errors }
 }
 
