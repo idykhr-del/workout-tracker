@@ -53,8 +53,24 @@ async function nFetch(
       continue
     }
     if (!res.ok) {
-      const text = await res.text()
-      throw new Error(`Notion ${method} ${path} → ${res.status}: ${text}`)
+      // Parse Notion's error JSON and extract the human-readable message.
+      // Raw text can be very long and gets truncated/garbled in console output.
+      let notionMsg: string
+      try {
+        const j = await res.json() as Record<string, unknown>
+        // Notion error shape: { object, status, code, message, request_id }
+        notionMsg = `[${j['code'] ?? 'error'}] ${j['message'] ?? JSON.stringify(j)}`
+      } catch {
+        notionMsg = await res.text().catch(() => `HTTP ${res.status}`)
+      }
+      // Log request body (truncated) to Vercel Function logs for debugging
+      if (body) {
+        console.error(
+          `[sessions] Notion ${res.status} on ${method} ${path}:`, notionMsg,
+          '\n  → props sent:', JSON.stringify(body).slice(0, 800),
+        )
+      }
+      throw new Error(`Notion ${method} ${path} → ${res.status}: ${notionMsg}`)
     }
     return res.json() as Promise<AnyObj>
   }
@@ -147,7 +163,10 @@ function decodeMemo(raw: string, sep: string): { userMemo?: string; extra: AnyOb
 // ─── Session page ↔ WorkoutSession ───────────────────────────────────────────
 
 function buildSessionProps(session: AnyObj): AnyObj {
-  const { memo: userMemo, totalCalories, notes, id, date, startTime, endTime, rating } = session as Record<string, unknown>
+  const {
+    memo: userMemo, totalCalories, notes,
+    id, date, startTime, endTime, rating,
+  } = session as Record<string, unknown>
 
   const extra: AnyObj = {}
   if (totalCalories != null) extra.totalCalories = totalCalories
@@ -155,7 +174,11 @@ function buildSessionProps(session: AnyObj): AnyObj {
 
   const memoStr = encodeMemo(userMemo as string | undefined, extra, SEP_SESSION)
 
-  return {
+  // ── Strict whitelist: exactly the 7 columns that exist in workout_sessions DB ──
+  // Name (title) | date | startTime | endTime | rating | memo | original_id
+  //
+  // Sending ANY other property name → Notion 400 validation error.
+  const props: AnyObj = {
     Name:        titleProp(`${date ?? ''} ${startTime ?? ''}`),
     date:        dateProp(date as string ?? ''),
     startTime:   textProp(startTime as string ?? ''),
@@ -164,6 +187,10 @@ function buildSessionProps(session: AnyObj): AnyObj {
     memo:        textProp(memoStr),
     original_id: textProp(id as string ?? ''),
   }
+
+  // Verify no extra keys have accidentally crept in (Vercel Function log)
+  console.log('[sessions] buildSessionProps keys:', Object.keys(props).join(', '))
+  return props
 }
 
 function pageToSession(page: NotionPage): AnyObj {
@@ -207,7 +234,9 @@ function buildExerciseProps(
   if (calories != null)        extra.calories        = calories
   if (grip)                    extra.grip            = grip
 
-  return {
+  // ── Strict whitelist: exactly the 8 columns in workout_exercises DB ──
+  // Name | session_id | category | setNumber | weight | reps | memo | date
+  const props: AnyObj = {
     Name:       titleProp(exName),
     session_id: textProp(sessionOriginalId),
     category:   textProp(exCategory),
@@ -217,6 +246,9 @@ function buildExerciseProps(
     memo:       textProp(encodeMemo(userMemo as string | undefined, extra, SEP_EXERCISE)),
     date:       dateProp(sessionDate),
   }
+
+  console.log('[sessions] buildExerciseProps keys:', Object.keys(props).join(', '))
+  return props
 }
 
 interface ExRecord {

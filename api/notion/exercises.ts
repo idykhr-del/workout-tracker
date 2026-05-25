@@ -136,6 +136,12 @@ export default async function handler(req: any, res: any) {
     res.status(400).json({ error: 'Missing required fields: sessionId, name, setNumber, set' }); return
   }
 
+  const props = buildProps(body)
+  // Log property keys to Vercel Function logs for debugging
+  console.log('[exercises] buildProps keys:', Object.keys(props).join(', '))
+
+  const notionBody = { parent: { database_id: dbId }, properties: props }
+
   // POST to Notion with up to 3 retries on 429
   for (let attempt = 0; attempt < 3; attempt++) {
     let notionRes: Response
@@ -147,10 +153,7 @@ export default async function handler(req: any, res: any) {
           'Notion-Version': NOTION_VERSION,
           'Content-Type':   'application/json',
         },
-        body: JSON.stringify({
-          parent:     { database_id: dbId },
-          properties: buildProps(body),
-        }),
+        body: JSON.stringify(notionBody),
       })
     } catch (err) {
       res.status(500).json({ error: `Network error: ${String(err)}` }); return
@@ -163,8 +166,19 @@ export default async function handler(req: any, res: any) {
     }
 
     if (!notionRes.ok) {
-      const text = await notionRes.text()
-      res.status(502).json({ error: `Notion error ${notionRes.status}: ${text}` }); return
+      // Extract Notion's human-readable message (same format as sessions.ts)
+      let notionMsg: string
+      try {
+        const j = await notionRes.json() as Record<string, unknown>
+        notionMsg = `[${j['code'] ?? 'error'}] ${j['message'] ?? JSON.stringify(j)}`
+      } catch {
+        notionMsg = await notionRes.text().catch(() => `HTTP ${notionRes.status}`)
+      }
+      console.error(
+        `[exercises] Notion ${notionRes.status}:`, notionMsg,
+        '\n  → props:', JSON.stringify(props).slice(0, 600),
+      )
+      res.status(502).json({ error: `Notion ${notionRes.status}: ${notionMsg}` }); return
     }
 
     const data = await notionRes.json() as Record<string, unknown>
