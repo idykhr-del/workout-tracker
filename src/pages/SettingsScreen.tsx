@@ -90,7 +90,8 @@ export default function SettingsScreen({
     if (migrating || data.sessions.length === 0) return
     setMigrating(true)
     setMigProgress(0)
-    setMigResult(null)
+    setMigResult(null)        // reset previous result so progress bar shows
+    setMigrationDone(false)   // allow re-run regardless of prior state
     const result = await migrateAllSessions(data.sessions, (done, total) => {
       setMigProgress(Math.round((done / total) * 100))
     })
@@ -217,7 +218,7 @@ export default function SettingsScreen({
             </div>
             <div className="text-xs text-muted mb-3 leading-relaxed">
               localStorage内の全ワークアウト（{data.sessions.length}件）をNotionにコピーします。
-              {migrationDone && ' ✅ 移行済み'}
+              {migrationDone && !migResult && ' ✅ 移行済み'}
             </div>
 
             {migrating ? (
@@ -231,22 +232,37 @@ export default function SettingsScreen({
                 <div className="text-xs text-muted text-center">{migProgress}% 完了…</div>
               </>
             ) : migResult ? (
-              <div className={`text-xs font-semibold text-center py-1 rounded-lg ${
-                migResult.errors === 0
-                  ? 'text-accentGreen bg-accentGreen/10'
-                  : 'text-yellow-400 bg-yellow-500/10'
-              }`}>
-                {migResult.errors === 0
-                  ? `✅ 移行完了 — ${migResult.success}件成功`
-                  : `⚠ ${migResult.success}件成功 / ${migResult.errors}件エラー`}
-              </div>
+              <>
+                <div className={`text-xs font-semibold text-center py-1.5 rounded-lg ${
+                  migResult.errors === 0
+                    ? 'text-accentGreen bg-accentGreen/10'
+                    : 'text-yellow-400 bg-yellow-500/10'
+                }`}>
+                  {migResult.errors === 0
+                    ? `✅ 移行完了 — ${migResult.success}件成功`
+                    : `⚠ ${migResult.success}件成功 / ${migResult.errors}件エラー`}
+                </div>
+                {migResult.errors > 0 && (
+                  <div className="text-[11px] text-muted mt-1.5 leading-relaxed">
+                    エラーの詳細はブラウザのコンソール（DevTools → Console）で確認できます。
+                    429の場合は少し待ってから再試行してください。
+                  </div>
+                )}
+                <button
+                  onClick={handleMigrate}
+                  disabled={data.sessions.length === 0}
+                  className="mt-2.5 w-full bg-surface border border-border disabled:opacity-40 text-white text-xs font-bold rounded-xl py-2.5 active:scale-95 transition-all"
+                >
+                  {migResult.errors > 0 ? `↺ 再試行する（${migResult.errors}件エラー）` : '↺ 再移行する'}
+                </button>
+              </>
             ) : (
               <button
                 onClick={handleMigrate}
-                disabled={data.sessions.length === 0 || migrationDone}
+                disabled={data.sessions.length === 0}
                 className="w-full bg-accent disabled:opacity-40 text-bg text-xs font-bold rounded-xl py-2.5 active:scale-95 transition-all"
               >
-                {migrationDone ? '移行済み ✓' : 'Notionへ移行する'}
+                {migrationDone ? '↺ 再移行する' : 'Notionへ移行する'}
               </button>
             )}
           </div>

@@ -101,7 +101,7 @@ export function markMigrated(): void {
 }
 
 /**
- * Push all sessions to Notion one-by-one, 500ms apart.
+ * Push all sessions to Notion one-by-one, 800ms apart.
  * Calls onProgress(done, total) after each attempt.
  */
 export async function migrateAllSessions(
@@ -113,29 +113,40 @@ export async function migrateAllSessions(
   const total = sessions.length
 
   for (let i = 0; i < total; i++) {
+    const s = sessions[i]
     try {
       const res = await fetch(API, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ session: sessions[i] }),
+        body:    JSON.stringify({ session: s }),
       })
       if (res.ok) {
         success++
+        console.log(`[migration] ✅ (${i + 1}/${total}) id=${s.id} date=${s.date}`)
       } else {
         errors++
-        console.warn('[migration] failed:', sessions[i].id, res.status)
+        let errBody: unknown = null
+        try { errBody = await res.json() } catch { /* ignore */ }
+        console.warn(
+          `[migration] ❌ (${i + 1}/${total}) HTTP ${res.status} — id=${s.id} date=${s.date}`,
+          errBody ?? `(no body)`,
+        )
       }
     } catch (err) {
       errors++
-      console.warn('[migration] error:', err)
+      console.error(
+        `[migration] ❌ (${i + 1}/${total}) network error — id=${s.id} date=${s.date}`,
+        err,
+      )
     }
 
     onProgress(i + 1, total)
 
-    // Respect Notion rate limit: ~3 req/sec → wait 400ms between sessions
-    if (i < total - 1) await delay(400)
+    // Notion rate limit: wait 800ms between sessions to avoid 429
+    if (i < total - 1) await delay(800)
   }
 
+  console.log(`[migration] done — success=${success} errors=${errors}`)
   return { success, errors }
 }
 
