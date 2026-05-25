@@ -175,21 +175,55 @@ function buildSessionProps(session: AnyObj): AnyObj {
   const memoStr = encodeMemo(userMemo as string | undefined, extra, SEP_SESSION)
 
   // ── Strict whitelist: exactly the 7 columns that exist in workout_sessions DB ──
-  // Name (title) | date | startTime | endTime | rating | memo | original_id
+  // Explicitly written in Notion API format — no helper aliases — to avoid ambiguity.
   //
-  // Sending ANY other property name → Notion 400 validation error.
+  //  Name        → title    : [{ text: { content: string } }]
+  //  date        → date     : { start: "YYYY-MM-DD" }  or null
+  //  startTime   → rich_text: [{ text: { content: string } }]
+  //  endTime     → rich_text: [{ text: { content: string } }]  ← omitted when empty
+  //  rating      → number   : number | null
+  //  memo        → rich_text: [{ text: { content: string } }]
+  //  original_id → rich_text: [{ text: { content: string } }]
+
+  const dateStr      = String(date      ?? '')
+  const startTimeStr = String(startTime ?? '')
+  const endTimeStr   = String(endTime   ?? '')
+  const idStr        = String(id        ?? '')
+
   const props: AnyObj = {
-    Name:        titleProp(`${date ?? ''} ${startTime ?? ''}`),
-    date:        dateProp(date as string ?? ''),
-    startTime:   textProp(startTime as string ?? ''),
-    endTime:     textProp(endTime   as string ?? ''),
-    rating:      numProp(rating  as number | undefined),
-    memo:        textProp(memoStr),
-    original_id: textProp(id as string ?? ''),
+    Name: {
+      title: [{ text: { content: `${dateStr} ${startTimeStr}`.trim().slice(0, 2000) } }],
+    },
+    date: {
+      date: dateStr ? { start: dateStr } : null,
+    },
+    startTime: {
+      rich_text: [{ text: { content: startTimeStr.slice(0, 100) } }],
+    },
+    // endTime is optional — omit the property entirely when empty so Notion
+    // does not receive an empty rich_text that can fail validation on some DB configs.
+    ...(endTimeStr ? {
+      endTime: {
+        rich_text: [{ text: { content: endTimeStr.slice(0, 100) } }],
+      },
+    } : {}),
+    rating: {
+      number: typeof rating === 'number' ? rating : null,
+    },
+    memo: {
+      rich_text: [{ text: { content: memoStr.slice(0, 2000) } }],
+    },
+    original_id: {
+      rich_text: [{ text: { content: idStr.slice(0, 500) } }],
+    },
   }
 
-  // Verify no extra keys have accidentally crept in (Vercel Function log)
-  console.log('[sessions] buildSessionProps keys:', Object.keys(props).join(', '))
+  console.log(
+    '[sessions] buildSessionProps →',
+    `keys=[${Object.keys(props).join(', ')}]`,
+    `date=${dateStr} startTime=${startTimeStr} endTime=${endTimeStr || '(omitted)'}`,
+    `rating=${typeof rating === 'number' ? rating : 'null'}`,
+  )
   return props
 }
 
