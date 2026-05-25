@@ -165,28 +165,38 @@ export async function migrateToNotion(
     onProgress(done, total)
 
     // ── 2. POST each exercise set ──────────────────────────────────────────
+    const totalSetsForSession = s.exercises.reduce((n, e) => n + e.sets.length, 0)
+    console.log(
+      `[migrate] → exercises: ${s.exercises.length} types, ${totalSetsForSession} sets for session ${s.date}`,
+    )
+
     for (const ex of s.exercises) {
       for (let j = 0; j < ex.sets.length; j++) {
         // Wait 300 ms before each exercise POST (gives Notion time to breathe)
         await delay(300)
 
-        const setLabel = `${ex.name} set${j + 1} (session ${s.id})`
+        const setLabel = `${ex.name} set${j + 1} / session ${s.date}`
+        const payload = {
+          sessionId:  s.id,
+          category:   ex.category,
+          name:       ex.name,
+          instanceId: ex.instanceId,
+          setNumber:  j + 1,
+          set:        ex.sets[j],
+          date:       s.date,
+        }
+        console.log(`[migrate] → POST ${EXERCISES_API} — ${setLabel}`, payload)
+
         try {
           const res = await fetch(EXERCISES_API, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId:  s.id,
-              category:   ex.category,
-              name:       ex.name,
-              instanceId: ex.instanceId,
-              setNumber:  j + 1,
-              set:        ex.sets[j],
-              date:       s.date,
-            }),
+            body:    JSON.stringify(payload),
           })
           if (res.ok) {
             success++
+            const resBody = await res.json().catch(() => ({})) as Record<string, unknown>
+            console.log(`[migrate] ✅ exercise — ${setLabel} → notionId=${resBody.id ?? '?'}`)
           } else {
             errors++
             let errBody: unknown = null
