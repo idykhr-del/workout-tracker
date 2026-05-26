@@ -40,10 +40,11 @@ const NOTION_BASE    = 'https://api.notion.com/v1'
 const NOTION_VERSION = '2022-06-28'
 const SEP_EXERCISE   = '__EXTRA__'
 
-const titleProp = (v: string) => ({ title:     [{ text: { content: v.slice(0, 2000) } }] })
-const textProp  = (v: string) => ({ rich_text: [{ text: { content: v.slice(0, 2000) } }] })
-const numProp   = (v: number | undefined | null) => ({ number: v ?? null })
-const dateProp  = (v: string) => ({ date: v ? { start: v } : null })
+const titleProp  = (v: string) => ({ title:     [{ text: { content: v.slice(0, 2000) } }] })
+const textProp   = (v: string) => ({ rich_text: [{ text: { content: v.slice(0, 2000) } }] })
+const numProp    = (v: number | undefined | null) => ({ number: v ?? null })
+const dateProp   = (v: string) => ({ date: v ? { start: v } : null })
+const selectProp = (v: string) => ({ select: v ? { name: v } : null })
 
 function encodeMemo(userText: string | undefined, extra: Record<string, unknown>): string {
   const json = JSON.stringify(extra)
@@ -99,7 +100,7 @@ function buildProps(body: ReqBody): Record<string, unknown> {
   return {
     Name:       titleProp(name),
     session_id: textProp(sessionId),
-    category:   textProp(category),
+    category:   selectProp(category),
     setNumber:  numProp(setNumber),
     weight:     numProp(typeof weight === 'number' ? weight : undefined),
     reps:       numProp(typeof reps   === 'number' ? reps   : undefined),

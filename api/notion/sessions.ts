@@ -125,12 +125,18 @@ function getDateStr(page: NotionPage, prop: string): string {
   return (d?.start as string) ?? ''
 }
 
+function getSelect(page: NotionPage, prop: string): string {
+  const s = (page.properties?.[prop] as AnyObj)?.select as AnyObj | undefined
+  return (s?.name as string) ?? ''
+}
+
 // ─── Property builders ────────────────────────────────────────────────────────
 
-const titleProp = (v: string) => ({ title: [{ text: { content: v.slice(0, 2000) } }] })
-const textProp  = (v: string) => ({ rich_text: [{ text: { content: v.slice(0, 2000) } }] })
-const numProp   = (v: number | undefined | null) => ({ number: v ?? null })
-const dateProp  = (v: string) => ({ date: v ? { start: v } : null })
+const titleProp  = (v: string) => ({ title:     [{ text: { content: v.slice(0, 2000) } }] })
+const textProp   = (v: string) => ({ rich_text: [{ text: { content: v.slice(0, 2000) } }] })
+const numProp    = (v: number | undefined | null) => ({ number: v ?? null })
+const dateProp   = (v: string) => ({ date: v ? { start: v } : null })
+const selectProp = (v: string) => ({ select: v ? { name: v } : null })
 
 // ─── Memo encoding helpers ────────────────────────────────────────────────────
 //
@@ -273,7 +279,7 @@ function buildExerciseProps(
   const props: AnyObj = {
     Name:       titleProp(exName),
     session_id: textProp(sessionOriginalId),
-    category:   textProp(exCategory),
+    category:   selectProp(exCategory),
     setNumber:  numProp(setNumber),
     weight:     numProp(typeof weight === 'number' ? weight : undefined),
     reps:       numProp(typeof reps   === 'number' ? reps   : undefined),
@@ -302,7 +308,7 @@ function pageToExRecord(page: NotionPage): ExRecord {
 
   return {
     sessionId: getText(page, 'session_id'),
-    category:  getText(page, 'category'),
+    category:  getSelect(page, 'category'),
     name:      getText(page, 'Name'),
     setNumber: getNum(page, 'setNumber') ?? 0,
     weight:    getNum(page, 'weight'),
