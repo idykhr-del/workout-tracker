@@ -38,7 +38,6 @@
 
 const NOTION_BASE    = 'https://api.notion.com/v1'
 const NOTION_VERSION = '2022-06-28'
-const SEP_EXERCISE   = '__EXTRA__'
 
 const titleProp  = (v: string) => ({ title:     [{ text: { content: v.slice(0, 2000) } }] })
 const textProp   = (v: string) => ({ rich_text: [{ text: { content: v.slice(0, 2000) } }] })
@@ -46,9 +45,11 @@ const numProp    = (v: number | undefined | null) => ({ number: v ?? null })
 const dateProp   = (v: string) => ({ date: v ? { start: v } : null })
 const selectProp = (v: string) => ({ select: v ? { name: v } : null })
 
-function encodeMemo(userText: string | undefined, extra: Record<string, unknown>): string {
-  const json = JSON.stringify(extra)
-  return userText ? `${userText}${SEP_EXERCISE}${json}` : json
+/** __EXTRA__{...} サフィックスを除去してユーザーメモだけ返す */
+function cleanMemo(m: string | undefined): string {
+  if (!m) return ''
+  const i = m.indexOf('__EXTRA__')
+  return i !== -1 ? m.substring(0, i).trim() : m
 }
 
 // ─── Request body type ────────────────────────────────────────────────────────
@@ -79,23 +80,8 @@ interface ReqBody {
 // ─── Property builder ─────────────────────────────────────────────────────────
 
 function buildProps(body: ReqBody): Record<string, unknown> {
-  const { sessionId, category, name, instanceId, setNumber, set, date } = body
-  const {
-    memo: userMemo, weight, reps,
-    durationMinutes, distanceKm, incline, calories, grip,
-    id: setId, timestamp,
-  } = set
-
-  // Pack fields that have no dedicated DB column into memo JSON
-  const extra: Record<string, unknown> = {}
-  if (setId           != null) extra.setId           = setId
-  if (instanceId      != null) extra.instanceId      = instanceId
-  if (timestamp       != null) extra.timestamp       = timestamp
-  if (durationMinutes != null) extra.durationMinutes = durationMinutes
-  if (distanceKm      != null) extra.distanceKm      = distanceKm
-  if (incline         != null) extra.incline         = incline
-  if (calories        != null) extra.calories        = calories
-  if (grip)                    extra.grip            = grip
+  const { sessionId, category, name, setNumber, set, date } = body
+  const { memo: userMemo, weight, reps } = set
 
   return {
     Name:       titleProp(name),
@@ -104,7 +90,8 @@ function buildProps(body: ReqBody): Record<string, unknown> {
     setNumber:  numProp(setNumber),
     weight:     numProp(typeof weight === 'number' ? weight : undefined),
     reps:       numProp(typeof reps   === 'number' ? reps   : undefined),
-    memo:       textProp(encodeMemo(userMemo, extra)),
+    // ユーザーメモのみ。__EXTRA__{...} サフィックスは除去する
+    memo:       textProp(cleanMemo(userMemo)),
     date:       dateProp(date),
   }
 }

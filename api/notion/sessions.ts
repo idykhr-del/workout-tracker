@@ -253,6 +253,13 @@ function pageToSession(page: NotionPage): AnyObj {
 
 // ─── Exercise set page ↔ ExerciseEntry+WorkoutSet ─────────────────────────────
 
+/** __EXTRA__{...} サフィックスを除去してユーザーメモだけ返す */
+function cleanMemo(m: string | undefined): string {
+  if (!m) return ''
+  const i = m.indexOf('__EXTRA__')
+  return i !== -1 ? m.substring(0, i).trim() : m
+}
+
 function buildExerciseProps(
   sessionOriginalId: string,
   exCategory: string,
@@ -261,34 +268,21 @@ function buildExerciseProps(
   set: AnyObj,
   sessionDate: string,
 ): AnyObj {
-  const { memo: userMemo, weight, reps, durationMinutes, distanceKm, incline,
-          calories, grip, id: setId, timestamp, instanceId } = set as Record<string, unknown>
-
-  const extra: AnyObj = {}
-  if (setId != null)           extra.setId           = setId
-  if (instanceId != null)      extra.instanceId      = instanceId
-  if (timestamp != null)       extra.timestamp       = timestamp
-  if (durationMinutes != null) extra.durationMinutes = durationMinutes
-  if (distanceKm != null)      extra.distanceKm      = distanceKm
-  if (incline != null)         extra.incline         = incline
-  if (calories != null)        extra.calories        = calories
-  if (grip)                    extra.grip            = grip
+  const { memo: userMemo, weight, reps } = set as Record<string, unknown>
 
   // ── Strict whitelist: exactly the 8 columns in workout_exercises DB ──
   // Name | session_id | category | setNumber | weight | reps | memo | date
-  const props: AnyObj = {
+  return {
     Name:       titleProp(exName),
     session_id: textProp(sessionOriginalId),
     category:   selectProp(exCategory),
     setNumber:  numProp(setNumber),
     weight:     numProp(typeof weight === 'number' ? weight : undefined),
     reps:       numProp(typeof reps   === 'number' ? reps   : undefined),
-    memo:       textProp(encodeMemo(userMemo as string | undefined, extra, SEP_EXERCISE)),
+    // ユーザーメモのみ。__EXTRA__{...} サフィックスは除去する
+    memo:       textProp(cleanMemo(userMemo as string | undefined)),
     date:       dateProp(sessionDate),
   }
-
-  console.log('[sessions] buildExerciseProps keys:', Object.keys(props).join(', '))
-  return props
 }
 
 interface ExRecord {

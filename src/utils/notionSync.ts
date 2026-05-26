@@ -191,7 +191,11 @@ export async function migrateToNotion(
           const res = await fetch(EXERCISES_API, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(payload),
+            // クライアント側でも memo を事前にクリーンアップ（サーバー側と二重で保護）
+            body:    JSON.stringify({
+              ...payload,
+              set: { ...payload.set, memo: cleanMemo(payload.set.memo) },
+            }),
           })
           if (res.ok) {
             success++
@@ -223,6 +227,13 @@ export async function migrateToNotion(
 
 function delay(ms: number) {
   return new Promise<void>(r => setTimeout(r, ms))
+}
+
+/** __EXTRA__{...} サフィックスを除去してユーザーメモだけ返す */
+function cleanMemo(m: string | undefined): string | undefined {
+  if (!m) return m
+  const i = m.indexOf('__EXTRA__')
+  return i !== -1 ? (m.substring(0, i).trim() || undefined) : m
 }
 
 // ── Merge helper ─────────────────────────────────────────────────────────────
