@@ -13,6 +13,14 @@ import { useRunningData } from '../hooks/useRunningData'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+const STRAVA_AUTH_URL =
+  'https://www.strava.com/oauth/authorize' +
+  '?client_id=252383' +
+  '&response_type=code' +
+  '&redirect_uri=https://workout-tracker-ivory-three.vercel.app/api/strava/callback' +
+  '&approval_prompt=auto' +
+  '&scope=activity:read_all'
+
 const ACTIVITY_ICONS: Record<RunningActivityType, string> = {
   running:  '🏃',
   walking:  '🚶',
@@ -357,7 +365,7 @@ function ManualForm({
 export default function RunningTab() {
   const {
     records, stravaConnected, lastSync, isLoading, syncing,
-    addRecord, deleteRecord, connectStrava, syncStrava,
+    addRecord, deleteRecord, syncStrava,
   } = useRunningData()
 
   const [syncResult,     setSyncResult]     = useState<{ synced: number; error?: string } | null>(null)
@@ -493,12 +501,14 @@ export default function RunningTab() {
                     {syncing ? '同期中…' : '同期する'}
                   </button>
                 ) : (
-                  <button
-                    onClick={connectStrava}
-                    className="bg-orange-500 text-white font-bold text-sm rounded-xl px-4 py-2.5 active:scale-95 transition-all"
+                  <a
+                    href={STRAVA_AUTH_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-orange-500 text-white font-bold text-sm rounded-xl px-4 py-2.5 active:scale-95 transition-all inline-block"
                   >
                     連携する
-                  </button>
+                  </a>
                 )}
               </div>
 
