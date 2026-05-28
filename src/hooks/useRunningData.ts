@@ -13,7 +13,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { RunningRecord, StravaTokens } from '../types'
+import type { RunningRecord } from '../types'
 import {
   loadRunningRecordsSync,
   saveRunningRecords,
