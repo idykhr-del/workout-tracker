@@ -56,3 +56,39 @@ export interface WorkoutData {
   sessions: WorkoutSession[]
   customExercises: CustomExercise[]
 }
+
+// ── Running / Walking ─────────────────────────────────────────────────────────
+
+export type RunningActivityType = 'running' | 'walking' | 'treadmill' | 'hike'
+
+export interface RunningRecord {
+  /** Client-generated UUID */
+  id: string
+  /** Notion page ID (for PATCH / archive) */
+  notionPageId?: string
+  /** YYYY-MM-DD */
+  date: string
+  activityType: RunningActivityType
+  /** km */
+  distanceKm?: number
+  /** seconds */
+  durationSec?: number
+  /** seconds per km — shown for running / hike */
+  avgPaceSec?: number
+  avgHeartRate?: number
+  maxHeartRate?: number
+  calories?: number
+  source: 'strava' | 'manual'
+  /** Strava activity ID string – used for de-duplication */
+  stravaId?: string
+  memo?: string
+}
+
+export interface StravaTokens {
+  accessToken: string
+  refreshToken: string
+  /** Unix timestamp in seconds */
+  expiresAt: number
+  /** Unix timestamp in seconds – passed as `after` on next Strava fetch */
+  lastSyncEpoch?: number
+}
