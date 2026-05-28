@@ -143,13 +143,14 @@ function successHtml(appUrl: string, athleteName: string): string {
   <small>iOSホーム画面版の場合は、ホーム画面のアイコンからアプリを開いてください。</small>
 </div>
 <script>
-  // If opened via window.open, try to notify the opener and close
+  // Notify opener (PWA) and close this Safari window
   try {
     if (window.opener) {
       window.opener.postMessage({ type: 'strava_connected' }, '*')
-      window.close()
     }
   } catch(e) {}
+  // Always close after a short delay so the user sees the success message
+  setTimeout(function() { try { window.close() } catch(e) {} }, 2000)
 </script>
 </body>
 </html>`

@@ -137,10 +137,51 @@ export function useRunningData() {
     }
   }, [])
 
-  // ── Open Strava OAuth (navigates away — returns via callback) ─────────────
+  // ── Open Strava OAuth in a new window (iOS PWA compatible) ──────────────
+  //
+  // window.location.href navigates the PWA away and loses its state on iOS.
+  // window.open('_blank') opens a new Safari window instead, leaving the PWA
+  // intact. The callback page calls window.close() to dismiss Safari and the
+  // user is returned to the PWA automatically.
+  //
+  // Two signals to detect completion:
+  //   1. postMessage { type: 'strava_connected' } sent by the callback page
+  //   2. Polling: popup.closed becomes true after window.close()
+  // Either one triggers a server status re-check to confirm connection.
   const connectStrava = useCallback(() => {
-    // Open in the current window so iOS PWA users see the success page
-    window.location.href = API_AUTH
+    // Do NOT use noopener/noreferrer — we need window.opener in the callback
+    const popup = window.open(API_AUTH, '_blank')
+
+    const recheckStatus = () => {
+      fetch(`${API_SYNC}?status=1`)
+        .then(r => r.json() as Promise<StatusResult>)
+        .then(status => {
+          setStravaConnected(status.connected)
+          if (status.lastSync) setLastSync(status.lastSync)
+        })
+        .catch(() => {})
+    }
+
+    // Signal 1: postMessage from callback page
+    const handleMessage = (e: MessageEvent) => {
+      if ((e.data as { type?: string })?.type === 'strava_connected') {
+        window.removeEventListener('message', handleMessage)
+        recheckStatus()
+      }
+    }
+    window.addEventListener('message', handleMessage)
+
+    // Signal 2: poll until popup closes (fallback for cases where postMessage
+    // is blocked, e.g. cross-origin restrictions in some iOS versions)
+    if (popup) {
+      const timer = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(timer)
+          window.removeEventListener('message', handleMessage)
+          recheckStatus()
+        }
+      }, 600)
+    }
   }, [])
 
   // ── Disconnect Strava ─────────────────────────────────────────────────────
