@@ -86,6 +86,32 @@ export default function SettingsScreen({
   const [migProgress,  setMigProgress]  = useState(0)   // 0–100
   const [migResult,    setMigResult]    = useState<{ success: number; errors: number } | null>(null)
 
+  // Notion relation backfill state
+  const [backfilling,    setBackfilling]    = useState(false)
+  const [backfillResult, setBackfillResult] = useState<{ updated: number; skipped: number; errors: number } | null>(null)
+
+  const handleBackfill = async () => {
+    if (backfilling) return
+    setBackfilling(true)
+    setBackfillResult(null)
+    try {
+      const res = await fetch('/api/notion/backfill-relations', { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json() as { updated: number; skipped: number; errors: number }
+        setBackfillResult(data)
+      } else {
+        const txt = await res.text().catch(() => `HTTP ${res.status}`)
+        console.error('[backfill] server error:', txt)
+        setBackfillResult({ updated: 0, skipped: 0, errors: 1 })
+      }
+    } catch (err) {
+      console.error('[backfill] network error:', err)
+      setBackfillResult({ updated: 0, skipped: 0, errors: 1 })
+    } finally {
+      setBackfilling(false)
+    }
+  }
+
   const handleMigrate = async () => {
     if (migrating || data.sessions.length === 0) return
     setMigrating(true)
@@ -263,6 +289,47 @@ export default function SettingsScreen({
                 className="w-full bg-accent disabled:opacity-40 text-bg text-xs font-bold rounded-xl py-2.5 active:scale-95 transition-all"
               >
                 {migrationDone ? '↺ 再移行する' : 'Notionへ移行する'}
+              </button>
+            )}
+          </div>
+
+          {/* Relation backfill */}
+          <div className="border border-border rounded-xl p-3 bg-surface/50 mt-3">
+            <div className="text-xs font-semibold text-white mb-1">
+              🔗 過去データのリレーションを修復
+            </div>
+            <div className="text-xs text-muted mb-3 leading-relaxed">
+              workout_exercisesのsession_relationが未設定のレコードを一括で設定します。
+              移行後に一度だけ実行してください。
+            </div>
+
+            {backfilling ? (
+              <div className="text-xs text-muted text-center py-2">🔄 処理中… しばらくお待ちください</div>
+            ) : backfillResult ? (
+              <>
+                <div className={`text-xs font-semibold text-center py-1.5 rounded-lg ${
+                  backfillResult.errors === 0
+                    ? 'text-accentGreen bg-accentGreen/10'
+                    : 'text-yellow-400 bg-yellow-500/10'
+                }`}>
+                  {backfillResult.errors === 0
+                    ? `✅ ${backfillResult.updated}件を更新しました`
+                    : `⚠ ${backfillResult.updated}件更新 / ${backfillResult.errors}件エラー`}
+                  {backfillResult.skipped > 0 && `（${backfillResult.skipped}件スキップ）`}
+                </div>
+                <button
+                  onClick={handleBackfill}
+                  className="mt-2.5 w-full bg-surface border border-border text-white text-xs font-bold rounded-xl py-2.5 active:scale-95 transition-all"
+                >
+                  ↺ 再実行する
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleBackfill}
+                className="w-full bg-surface border border-border text-white text-xs font-bold rounded-xl py-2.5 active:scale-95 transition-all"
+              >
+                リレーションを修復する
               </button>
             )}
           </div>

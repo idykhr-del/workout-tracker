@@ -267,12 +267,13 @@ function buildExerciseProps(
   setNumber: number,
   set: AnyObj,
   sessionDate: string,
+  sessionNotionId?: string,
 ): AnyObj {
   const { memo: userMemo, weight, reps } = set as Record<string, unknown>
 
-  // ── Strict whitelist: exactly the 8 columns in workout_exercises DB ──
-  // Name | session_id | category | setNumber | weight | reps | memo | date
-  return {
+  // ── Strict whitelist: columns in workout_exercises DB ──
+  // Name | session_id | session_relation | category | setNumber | weight | reps | memo | date
+  const props: AnyObj = {
     Name:       titleProp(exName),
     session_id: textProp(sessionOriginalId),
     category:   selectProp(exCategory),
@@ -283,6 +284,12 @@ function buildExerciseProps(
     memo:       textProp(cleanMemo(userMemo as string | undefined)),
     date:       dateProp(sessionDate),
   }
+
+  if (sessionNotionId) {
+    props.session_relation = { relation: [{ id: sessionNotionId }] }
+  }
+
+  return props
 }
 
 interface ExRecord {
@@ -388,6 +395,7 @@ async function archiveExercisesForSession(
 async function createExercisePages(
   dbId: string, apiKey: string,
   session: AnyObj,
+  sessionNotionId: string | undefined,
   rateDelayMs = 0,
 ): Promise<void> {
   const exercises = (session.exercises ?? []) as AnyObj[]
@@ -402,6 +410,7 @@ async function createExercisePages(
         i + 1,
         set,
         session.date as string,
+        sessionNotionId,
       )
       await nFetch('/pages', 'POST', apiKey, {
         parent:     { database_id: dbId },
@@ -480,9 +489,9 @@ export default async function handler(req: any, res: any) {
         notionId = created.id
       }
 
-      // Recreate all exercise pages
+      // Recreate all exercise pages (pass notionId so session_relation is set immediately)
       await archiveExercisesForSession(exercisesDb, apiKey, session.id as string)
-      await createExercisePages(exercisesDb, apiKey, session, 0)
+      await createExercisePages(exercisesDb, apiKey, session, notionId, 0)
 
       res.status(200).json({ ok: true, notionId })
       return
