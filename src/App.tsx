@@ -3,6 +3,7 @@ import { useWorkoutData } from './hooks/useWorkoutData'
 import RecordScreen from './pages/RecordScreen'
 import GraphScreen from './pages/GraphScreen'
 import CalendarScreen from './pages/CalendarScreen'
+import RecommendScreen from './pages/RecommendScreen'
 import SettingsScreen from './pages/SettingsScreen'
 import RunningTab from './components/RunningTab'
 import { loadBodyWeight, saveBodyWeight, loadAge, saveAge, loadRestSeconds, saveRestSeconds } from './utils/storage'
@@ -12,22 +13,24 @@ import type { WorkoutSession } from './types'
 // カロリー計算式バージョン管理：バージョンが変わったら全セッションを遡及計算する
 const CALORIE_CALC_VERSION = 'calorie_v2'
 
-type Tab = 'record' | 'graph' | 'calendar' | 'running' | 'settings'
+type Tab = 'record' | 'graph' | 'calendar' | 'running' | 'recommend' | 'settings'
 
 const TABS: { key: Tab; icon: string; label: string }[] = [
-  { key: 'record',   icon: '📝', label: '記録' },
-  { key: 'graph',    icon: '📊', label: 'グラフ' },
-  { key: 'calendar', icon: '📅', label: '暦' },
-  { key: 'running',  icon: '🏃', label: 'ラン' },
-  { key: 'settings', icon: '⚙️', label: '設定' },
+  { key: 'record',    icon: '📝', label: '記録' },
+  { key: 'graph',     icon: '📊', label: 'グラフ' },
+  { key: 'calendar',  icon: '📅', label: '暦' },
+  { key: 'running',   icon: '🏃', label: 'ラン' },
+  { key: 'recommend', icon: '💡', label: 'おすすめ' },
+  { key: 'settings',  icon: '⚙️', label: '設定' },
 ]
 
 const TAB_TITLES: Record<Tab, string> = {
-  record:   'ワークアウト記録',
-  graph:    '履歴・グラフ',
-  calendar: 'カレンダー',
-  running:  'ランニング・ウォーキング',
-  settings: '設定',
+  record:    'ワークアウト記録',
+  graph:     '履歴・グラフ',
+  calendar:  'カレンダー',
+  running:   'ランニング・ウォーキング',
+  recommend: 'おすすめ分析',
+  settings:  '設定',
 }
 
 export default function App() {
@@ -132,6 +135,9 @@ export default function App() {
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'running' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <RunningTab />
         </div>
+        <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'recommend' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+          <RecommendScreen data={data} bodyWeight={bodyWeight} />
+        </div>
         <div className={`absolute inset-0 transition-opacity duration-150 ${tab === 'settings' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
           <SettingsScreen
             data={data}
@@ -148,7 +154,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* Bottom nav — 5 tabs */}
+      {/* Bottom nav — 6 tabs */}
       <nav className="shrink-0 border-t border-border bg-surface pb-safe pb-4">
         <div className="flex">
           {TABS.map(t => (
