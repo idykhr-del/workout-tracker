@@ -106,55 +106,7 @@ async function storeTokensInNotion(
   }
 }
 
-/** Derive the front-end app URL from STRAVA_REDIRECT_URI (strip /api/strava/callback) */
-function deriveAppUrl(redirectUri: string): string {
-  try {
-    const u = new URL(redirectUri)
-    return `${u.protocol}//${u.host}`
-  } catch { return '/' }
-}
-
-function successHtml(appUrl: string, athleteName: string): string {
-  return `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Strava連携完了</title>
-<style>
-  body { margin: 0; font-family: -apple-system, sans-serif;
-         background: #0f0f14; color: #fff; display: flex; flex-direction: column;
-         align-items: center; justify-content: center; min-height: 100svh; padding: 24px; box-sizing: border-box; }
-  .card { background: #1a1a24; border: 1px solid #2a2a38; border-radius: 24px; padding: 40px 32px; max-width: 360px; width: 100%; text-align: center; }
-  .emoji { font-size: 56px; margin-bottom: 16px; }
-  h1 { font-size: 20px; font-weight: 700; margin: 0 0 8px; }
-  p { font-size: 14px; color: #888; margin: 0 0 32px; line-height: 1.6; }
-  a { display: block; background: #e85d04; color: #fff; font-weight: 700; border-radius: 16px;
-      padding: 16px; text-decoration: none; font-size: 16px; }
-  small { display: block; margin-top: 16px; font-size: 12px; color: #555; line-height: 1.5; }
-</style>
-</head>
-<body>
-<div class="card">
-  <div class="emoji">🎉</div>
-  <h1>Strava連携完了！</h1>
-  <p>${athleteName ? `${athleteName}さん、` : ''}Stravaとの連携が完了しました。<br>アプリに戻って「同期する」を押してください。</p>
-  <a href="${appUrl}">アプリに戻る</a>
-  <small>iOSホーム画面版の場合は、ホーム画面のアイコンからアプリを開いてください。</small>
-</div>
-<script>
-  // Notify opener (PWA) and close this Safari window
-  try {
-    if (window.opener) {
-      window.opener.postMessage({ type: 'strava_connected' }, '*')
-    }
-  } catch(e) {}
-  // Always close after a short delay so the user sees the success message
-  setTimeout(function() { try { window.close() } catch(e) {} }, 2000)
-</script>
-</body>
-</html>`
-}
+const APP_URL = 'https://workout-tracker-ivory-three.vercel.app'
 
 function errorHtml(message: string): string {
   return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>エラー</title>
@@ -182,7 +134,6 @@ export default async function handler(req: any, res: any) {
 
   const clientId     = process.env.STRAVA_CLIENT_ID
   const clientSecret = process.env.STRAVA_CLIENT_SECRET
-  const redirectUri  = process.env.STRAVA_REDIRECT_URI
   const apiKey       = process.env.NOTION_API_KEY
   const dbId         = process.env.NOTION_RUNNING_DB_ID
 
@@ -230,9 +181,17 @@ export default async function handler(req: any, res: any) {
       console.warn('[strava/callback] NOTION_RUNNING_DB_ID not set — tokens NOT persisted')
     }
 
-    const appUrl = redirectUri ? deriveAppUrl(redirectUri) : '/'
-    res.setHeader('Content-Type', 'text/html')
-    res.status(200).send(successHtml(appUrl, athleteName))
+    // Redirect back to the PWA with tokens in the URL hash.
+    // iOS PWA: Safari opens for OAuth, then the user taps a link back to the PWA.
+    // The hash survives the transition and is read by useRunningData on mount.
+    const params = new URLSearchParams({
+      strava_connected: '1',
+      access_token:     accessToken,
+      refresh_token:    refreshToken,
+      expires_at:       String(expiresAt),
+    })
+    const redirectTo = `${APP_URL}/#${params.toString()}`
+    res.redirect(302, redirectTo)
 
   } catch (err: any) {
     console.error('[strava/callback]', err)

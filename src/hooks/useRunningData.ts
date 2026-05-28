@@ -54,6 +54,25 @@ export function useRunningData() {
     if (fetched.current) return
     fetched.current = true
 
+    // ── Hash-based Strava token handoff (iOS PWA OAuth flow) ──────────────
+    // After Strava OAuth the callback redirects to /#strava_connected=1&...
+    // Safari opens that URL; the PWA reads the hash on next mount.
+    const hash = window.location.hash
+    if (hash.includes('strava_connected=1')) {
+      try {
+        const params = new URLSearchParams(hash.slice(1)) // strip leading '#'
+        const accessToken  = params.get('access_token')  ?? ''
+        const refreshToken = params.get('refresh_token') ?? ''
+        const expiresAt    = parseInt(params.get('expires_at') ?? '0', 10)
+        if (accessToken && refreshToken && expiresAt) {
+          saveStravaTokens({ accessToken, refreshToken, expiresAt })
+          setStravaConnected(true)
+        }
+      } catch { /* ignore parse errors */ }
+      // Remove hash from URL without triggering a navigation
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    }
+
     // Check Strava connection status from server (picks up auth done on other devices / after callback)
     fetch(`${API_SYNC}?status=1`)
       .then(r => r.json() as Promise<StatusResult>)
