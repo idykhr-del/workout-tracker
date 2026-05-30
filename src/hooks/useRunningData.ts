@@ -1,15 +1,15 @@
 /**
  * src/hooks/useRunningData.ts
  *
- * Storage strategy (same layered approach as useWorkoutData):
- *   1. React state       — instant, in-memory
- *   2. localStorage      — local persistent cache
- *   3. Notion API        — source-of-truth sync (async)
+ * Storage strategy:
+ *   1. React state  — instant, in-memory
+ *   2. localStorage — running records cache only (no tokens stored here)
+ *   3. Notion API   — source of truth for both records and Strava tokens
  *
  * Startup:
- *   a) Read from localStorage instantly
+ *   a) Read running records from localStorage instantly
  *   b) If empty → call /api/notion/running to hydrate
- *   c) After each Strava sync → update both state and localStorage
+ *   c) Check Strava connection via GET /api/strava/sync?status=1 (reads Notion)
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -18,15 +18,10 @@ import {
   loadRunningRecordsSync,
   saveRunningRecords,
   mergeRunningRecords,
-  loadStravaTokens,
-  saveStravaTokens,
-  clearStravaTokens,
-  isStravaConnected,
 } from '../utils/runningStorage'
 
 const API_RUNNING = '/api/notion/running'
 const API_SYNC    = '/api/strava/sync'
-const API_AUTH    = '/api/strava/auth'
 
 interface SyncResult {
   synced: number
@@ -42,7 +37,7 @@ export function useRunningData() {
   const initial = loadRunningRecordsSync()
 
   const [records,         setRecords]         = useState<RunningRecord[]>(initial)
-  const [stravaConnected, setStravaConnected] = useState<boolean>(isStravaConnected())
+  const [stravaConnected, setStravaConnected] = useState<boolean>(false)  // always confirmed via server
   const [lastSync,        setLastSync]        = useState<string | null>(null)
   const [isLoading,       setIsLoading]       = useState<boolean>(initial.length === 0)
   const [syncing,         setSyncing]         = useState(false)
@@ -54,26 +49,7 @@ export function useRunningData() {
     if (fetched.current) return
     fetched.current = true
 
-    // ── Hash-based Strava token handoff (iOS PWA OAuth flow) ──────────────
-    // After Strava OAuth the callback redirects to /#strava_connected=1&...
-    // Safari opens that URL; the PWA reads the hash on next mount.
-    const hash = window.location.hash
-    if (hash.includes('strava_connected=1')) {
-      try {
-        const params = new URLSearchParams(hash.slice(1)) // strip leading '#'
-        const accessToken  = params.get('access_token')  ?? ''
-        const refreshToken = params.get('refresh_token') ?? ''
-        const expiresAt    = parseInt(params.get('expires_at') ?? '0', 10)
-        if (accessToken && refreshToken && expiresAt) {
-          saveStravaTokens({ accessToken, refreshToken, expiresAt })
-          setStravaConnected(true)
-        }
-      } catch { /* ignore parse errors */ }
-      // Remove hash from URL without triggering a navigation
-      window.history.replaceState(null, '', window.location.pathname + window.location.search)
-    }
-
-    // Check Strava connection status from server (picks up auth done on other devices / after callback)
+    // Check Strava connection status from Notion via server (single source of truth)
     fetch(`${API_SYNC}?status=1`)
       .then(r => r.json() as Promise<StatusResult>)
       .then(status => {
@@ -156,56 +132,8 @@ export function useRunningData() {
     }
   }, [])
 
-  // ── Open Strava OAuth in a new window (iOS PWA compatible) ──────────────
-  //
-  // window.location.href navigates the PWA away and loses its state on iOS.
-  // window.open('_blank') opens a new Safari window instead, leaving the PWA
-  // intact. The callback page calls window.close() to dismiss Safari and the
-  // user is returned to the PWA automatically.
-  //
-  // Two signals to detect completion:
-  //   1. postMessage { type: 'strava_connected' } sent by the callback page
-  //   2. Polling: popup.closed becomes true after window.close()
-  // Either one triggers a server status re-check to confirm connection.
-  const connectStrava = useCallback(() => {
-    // Do NOT use noopener/noreferrer — we need window.opener in the callback
-    const popup = window.open(API_AUTH, '_blank')
-
-    const recheckStatus = () => {
-      fetch(`${API_SYNC}?status=1`)
-        .then(r => r.json() as Promise<StatusResult>)
-        .then(status => {
-          setStravaConnected(status.connected)
-          if (status.lastSync) setLastSync(status.lastSync)
-        })
-        .catch(() => {})
-    }
-
-    // Signal 1: postMessage from callback page
-    const handleMessage = (e: MessageEvent) => {
-      if ((e.data as { type?: string })?.type === 'strava_connected') {
-        window.removeEventListener('message', handleMessage)
-        recheckStatus()
-      }
-    }
-    window.addEventListener('message', handleMessage)
-
-    // Signal 2: poll until popup closes (fallback for cases where postMessage
-    // is blocked, e.g. cross-origin restrictions in some iOS versions)
-    if (popup) {
-      const timer = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(timer)
-          window.removeEventListener('message', handleMessage)
-          recheckStatus()
-        }
-      }, 600)
-    }
-  }, [])
-
   // ── Disconnect Strava ─────────────────────────────────────────────────────
   const disconnectStrava = useCallback(() => {
-    clearStravaTokens()
     setStravaConnected(false)
     setLastSync(null)
   }, [])
@@ -220,9 +148,7 @@ export function useRunningData() {
       }
 
       if (!res.ok || data.error) {
-        // If Strava says token expired or not found, clear local tokens
         if (res.status === 401 || (data.error ?? '').includes('token')) {
-          clearStravaTokens()
           setStravaConnected(false)
         }
         return { synced: 0, error: data.error ?? `HTTP ${res.status}` }
@@ -237,19 +163,8 @@ export function useRunningData() {
         })
       }
 
-      // Strava tokens are stored server-side in Notion; update local status
       setStravaConnected(true)
-      const now = new Date().toISOString()
-      setLastSync(now)
-
-      // Persist updated token metadata to localStorage (for offline status display)
-      const existing = loadStravaTokens()
-      if (existing) {
-        saveStravaTokens({ ...existing, lastSyncEpoch: Math.floor(Date.now() / 1000) })
-      } else {
-        // Mark as connected without a real token (server has it in Notion)
-        saveStravaTokens({ accessToken: '', refreshToken: '', expiresAt: 0, lastSyncEpoch: Math.floor(Date.now() / 1000) })
-      }
+      setLastSync(new Date().toISOString())
 
       return { synced: data.synced ?? newRecords.length }
     } catch (err: unknown) {
@@ -268,7 +183,6 @@ export function useRunningData() {
     syncing,
     addRecord,
     deleteRecord,
-    connectStrava,
     disconnectStrava,
     syncStrava,
   }

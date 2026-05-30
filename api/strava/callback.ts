@@ -169,7 +169,7 @@ export default async function handler(req: any, res: any) {
 
     const tokens = { accessToken, refreshToken, expiresAt }
 
-    // Store tokens in Notion (best-effort; don't fail the whole callback if Notion is down)
+    // Store tokens in Notion (source of truth — no client-side token passing)
     if (apiKey && dbId) {
       try {
         await storeTokensInNotion(apiKey, dbId, tokens)
@@ -181,59 +181,10 @@ export default async function handler(req: any, res: any) {
       console.warn('[strava/callback] NOTION_RUNNING_DB_ID not set — tokens NOT persisted')
     }
 
-    // Return an HTML page that covers two flows:
-    //
-    // A) iframe flow:
-    //    RunningTab renders an iframe with the Strava auth URL.
-    //    This callback page (same origin as PWA) calls window.parent.postMessage
-    //    so the parent can pick up the tokens without any page reload.
-    //
-    // B) window.location.href flow (fallback):
-    //    The PWA's WKWebView navigated to Strava directly.
-    //    On return the WKWebView lands here (same origin), so localStorage
-    //    is shared with the PWA. We write tokens then redirect to root.
-    const tokenJson = JSON.stringify({ accessToken, refreshToken, expiresAt })
-    res.setHeader('Content-Type', 'text/html')
-    res.status(200).send(`<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Strava連携完了</title>
-<style>
-  body{margin:0;font-family:-apple-system,sans-serif;background:#0f0f14;color:#fff;
-       display:flex;flex-direction:column;align-items:center;justify-content:center;
-       min-height:100svh;padding:24px;box-sizing:border-box;text-align:center;}
-  .emoji{font-size:56px;margin-bottom:16px;}
-  h1{font-size:20px;font-weight:700;margin:0 0 8px;}
-  p{font-size:14px;color:#888;margin:0 0 24px;line-height:1.6;}
-  a{display:inline-block;background:#e85d04;color:#fff;font-weight:700;border-radius:16px;
-    padding:14px 28px;text-decoration:none;font-size:15px;}
-</style>
-</head>
-<body>
-<div class="emoji">🎉</div>
-<h1>Strava連携完了！</h1>
-<p>${athleteName ? `${athleteName}さん、` : ''}連携しました。<br>アプリに戻って「同期する」を押してください。</p>
-<a href="${APP_URL}">アプリに戻る</a>
-<!-- token data for JS -->
-<script id="td" type="application/json">${tokenJson}</script>
-<script>
-(function(){
-  var d = JSON.parse(document.getElementById('td').textContent || '{}');
-  if (!d.accessToken) return;
-  // B) window.location.href flow: write to localStorage (same-origin WKWebView)
-  try { localStorage.setItem('strava_tokens', JSON.stringify(d)); } catch(e) {}
-  // A) iframe flow: notify parent frame
-  try { window.parent.postMessage({ type: 'strava_connected', accessToken: d.accessToken, refreshToken: d.refreshToken, expiresAt: d.expiresAt }, '*'); } catch(e) {}
-  // B) redirect to PWA root after a short delay
-  if (window.parent === window) {
-    setTimeout(function(){ window.location.replace('${APP_URL}/'); }, 1500);
-  }
-})();
-</script>
-</body>
-</html>`)
+    // Redirect straight back to the PWA.
+    // The app checks connection status via GET /api/strava/sync?status=1 on mount,
+    // which reads the Notion config row — no localStorage or token passing needed.
+    res.redirect(302, APP_URL + '/')
 
   } catch (err: any) {
     console.error('[strava/callback]', err)
