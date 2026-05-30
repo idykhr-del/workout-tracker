@@ -83,7 +83,7 @@ function getText(page: NotionPage, prop: string): string {
 async function storeTokensInNotion(
   apiKey: string, dbId: string,
   tokens: { accessToken: string; refreshToken: string; expiresAt: number; lastSyncEpoch?: number },
-): Promise<void> {
+): Promise<{ action: 'updated' | 'created'; pageId: string }> {
   const today = new Date().toISOString().slice(0, 10)
   const props: AnyObj = {
     Name:      titleProp('__STRAVA_CONFIG__'),
@@ -96,13 +96,16 @@ async function storeTokensInNotion(
   const existing = await queryAll(dbId, apiKey, {
     property: 'strava_id', rich_text: { equals: CONFIG_ROW_ID },
   })
+  console.log('[strava/callback] existing config rows found:', existing.length)
 
   if (existing.length > 0 && existing[0].id) {
-    await nFetch(`/pages/${existing[0].id}`, 'PATCH', apiKey, { properties: props })
+    const page = await nFetch(`/pages/${existing[0].id}`, 'PATCH', apiKey, { properties: props }) as NotionPage
+    return { action: 'updated', pageId: page.id }
   } else {
-    await nFetch('/pages', 'POST', apiKey, {
+    const page = await nFetch('/pages', 'POST', apiKey, {
       parent: { database_id: dbId }, properties: props,
-    })
+    }) as NotionPage
+    return { action: 'created', pageId: page.id }
   }
 }
 
@@ -118,6 +121,10 @@ h1{color:#e55;margin:0 0 12px;}p{color:#888;margin:0;}</style></head>
 
 export default async function handler(req: any, res: any) {
   const { code, error, state } = req.query as Record<string, string>
+
+  console.log('[strava/callback] called, code:', code ? 'exists' : 'missing')
+  console.log('[strava/callback] NOTION_RUNNING_DB_ID:', process.env.NOTION_RUNNING_DB_ID ? 'set' : 'missing')
+  console.log('[strava/callback] NOTION_API_KEY:', process.env.NOTION_API_KEY ? 'set' : 'missing')
 
   if (error) {
     console.warn('[strava/callback] OAuth error:', error)
@@ -171,11 +178,12 @@ export default async function handler(req: any, res: any) {
 
     // Store tokens in Notion (source of truth — no client-side token passing)
     if (apiKey && dbId) {
+      console.log('[strava/callback] saving tokens to Notion, dbId:', dbId)
       try {
-        await storeTokensInNotion(apiKey, dbId, tokens)
-        console.log('[strava/callback] tokens stored in Notion')
+        const result = await storeTokensInNotion(apiKey, dbId, tokens)
+        console.log('[strava/callback] saved to Notion:', result)
       } catch (e) {
-        console.warn('[strava/callback] failed to store tokens in Notion:', e)
+        console.error('[strava/callback] error saving to Notion:', e)
       }
     } else {
       console.warn('[strava/callback] NOTION_RUNNING_DB_ID not set — tokens NOT persisted')
