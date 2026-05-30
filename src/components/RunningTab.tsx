@@ -3,7 +3,7 @@
  * Running / Walking record tab with Strava integration.
  */
 
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -365,27 +365,12 @@ function ManualForm({
 export default function RunningTab() {
   const {
     records, stravaConnected, lastSync, isLoading, syncing,
-    addRecord, deleteRecord, syncStrava, receiveTokensFromCallback,
+    addRecord, deleteRecord, syncStrava,
   } = useRunningData()
 
   const [syncResult,     setSyncResult]     = useState<{ synced: number; error?: string } | null>(null)
   const [showManualForm, setShowManualForm] = useState(false)
   const [selectedYM,     setSelectedYM]     = useState(currentYM())
-  const [showAuthFrame,  setShowAuthFrame]  = useState(false)
-
-  // ── Listen for postMessage from callback iframe ────────────────────────────
-  const handleAuthMessage = useCallback((e: MessageEvent) => {
-    const d = e.data as { type?: string; accessToken?: string; refreshToken?: string; expiresAt?: number }
-    if (d?.type === 'strava_connected' && d.accessToken && d.refreshToken && d.expiresAt) {
-      receiveTokensFromCallback({ accessToken: d.accessToken, refreshToken: d.refreshToken, expiresAt: d.expiresAt })
-      setShowAuthFrame(false)
-    }
-  }, [receiveTokensFromCallback])
-
-  useEffect(() => {
-    window.addEventListener('message', handleAuthMessage)
-    return () => window.removeEventListener('message', handleAuthMessage)
-  }, [handleAuthMessage])
 
   // ── Monthly navigation ────────────────────────────────────────────────────
   const allMonths = useMemo(() => {
@@ -469,40 +454,6 @@ export default function RunningTab() {
   return (
     <div className="flex flex-col h-full overflow-y-auto pb-8">
 
-      {/* ── Strava Auth iframe overlay ── */}
-      {showAuthFrame && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-bg">
-          {/* Header bar */}
-          <div className="flex items-center justify-between px-4 pt-12 pb-3 border-b border-border bg-surface shrink-0">
-            <span className="text-sm font-bold text-white">Strava連携</span>
-            <button
-              onClick={() => setShowAuthFrame(false)}
-              className="text-muted text-xl w-8 h-8 flex items-center justify-center"
-            >✕</button>
-          </div>
-
-          {/* iframe — Strava may block this with X-Frame-Options */}
-          <iframe
-            src={STRAVA_AUTH_URL}
-            className="flex-1 w-full border-0 bg-white"
-            title="Strava認証"
-          />
-
-          {/* Fallback: if iframe is blank/blocked, offer window.location.href navigation */}
-          <div className="shrink-0 border-t border-border bg-surface px-4 py-3 text-center">
-            <p className="text-[11px] text-muted mb-2">
-              上の画面が表示されない場合はこちら：
-            </p>
-            <button
-              onClick={() => { window.location.href = STRAVA_AUTH_URL }}
-              className="text-accent text-xs font-semibold underline underline-offset-2"
-            >
-              ブラウザ画面でStravaを開く
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Loading skeleton */}
       {isLoading && (
         <div className="flex flex-col items-center justify-center flex-1 gap-3 py-16">
@@ -551,7 +502,7 @@ export default function RunningTab() {
                   </button>
                 ) : (
                   <button
-                    onClick={() => setShowAuthFrame(true)}
+                    onClick={() => { window.location.href = STRAVA_AUTH_URL }}
                     className="bg-orange-500 text-white font-bold text-sm rounded-xl px-4 py-2.5 active:scale-95 transition-all"
                   >
                     連携する

@@ -156,14 +156,6 @@ export function useRunningData() {
     }
   }, [])
 
-  // ── Receive tokens from callback (iframe postMessage / localStorage flow) ─
-  // Called by RunningTab after receiving postMessage from the callback iframe,
-  // OR automatically on mount when localStorage was written by the callback page.
-  const receiveTokensFromCallback = useCallback((tokens: { accessToken: string; refreshToken: string; expiresAt: number }) => {
-    saveStravaTokens(tokens)
-    setStravaConnected(true)
-  }, [])
-
   // ── Open Strava OAuth in a new window (iOS PWA compatible) ──────────────
   //
   // window.location.href navigates the PWA away and loses its state on iOS.
@@ -279,6 +271,5 @@ export function useRunningData() {
     connectStrava,
     disconnectStrava,
     syncStrava,
-    receiveTokensFromCallback,
   }
 }
