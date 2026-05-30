@@ -181,17 +181,59 @@ export default async function handler(req: any, res: any) {
       console.warn('[strava/callback] NOTION_RUNNING_DB_ID not set — tokens NOT persisted')
     }
 
-    // Redirect back to the PWA with tokens in the URL hash.
-    // iOS PWA: Safari opens for OAuth, then the user taps a link back to the PWA.
-    // The hash survives the transition and is read by useRunningData on mount.
-    const params = new URLSearchParams({
-      strava_connected: '1',
-      access_token:     accessToken,
-      refresh_token:    refreshToken,
-      expires_at:       String(expiresAt),
-    })
-    const redirectTo = `${APP_URL}/#${params.toString()}`
-    res.redirect(302, redirectTo)
+    // Return an HTML page that covers two flows:
+    //
+    // A) iframe flow:
+    //    RunningTab renders an iframe with the Strava auth URL.
+    //    This callback page (same origin as PWA) calls window.parent.postMessage
+    //    so the parent can pick up the tokens without any page reload.
+    //
+    // B) window.location.href flow (fallback):
+    //    The PWA's WKWebView navigated to Strava directly.
+    //    On return the WKWebView lands here (same origin), so localStorage
+    //    is shared with the PWA. We write tokens then redirect to root.
+    const tokenJson = JSON.stringify({ accessToken, refreshToken, expiresAt })
+    res.setHeader('Content-Type', 'text/html')
+    res.status(200).send(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Strava連携完了</title>
+<style>
+  body{margin:0;font-family:-apple-system,sans-serif;background:#0f0f14;color:#fff;
+       display:flex;flex-direction:column;align-items:center;justify-content:center;
+       min-height:100svh;padding:24px;box-sizing:border-box;text-align:center;}
+  .emoji{font-size:56px;margin-bottom:16px;}
+  h1{font-size:20px;font-weight:700;margin:0 0 8px;}
+  p{font-size:14px;color:#888;margin:0 0 24px;line-height:1.6;}
+  a{display:inline-block;background:#e85d04;color:#fff;font-weight:700;border-radius:16px;
+    padding:14px 28px;text-decoration:none;font-size:15px;}
+</style>
+</head>
+<body>
+<div class="emoji">🎉</div>
+<h1>Strava連携完了！</h1>
+<p>${athleteName ? `${athleteName}さん、` : ''}連携しました。<br>アプリに戻って「同期する」を押してください。</p>
+<a href="${APP_URL}">アプリに戻る</a>
+<!-- token data for JS -->
+<script id="td" type="application/json">${tokenJson}</script>
+<script>
+(function(){
+  var d = JSON.parse(document.getElementById('td').textContent || '{}');
+  if (!d.accessToken) return;
+  // B) window.location.href flow: write to localStorage (same-origin WKWebView)
+  try { localStorage.setItem('strava_tokens', JSON.stringify(d)); } catch(e) {}
+  // A) iframe flow: notify parent frame
+  try { window.parent.postMessage({ type: 'strava_connected', accessToken: d.accessToken, refreshToken: d.refreshToken, expiresAt: d.expiresAt }, '*'); } catch(e) {}
+  // B) redirect to PWA root after a short delay
+  if (window.parent === window) {
+    setTimeout(function(){ window.location.replace('${APP_URL}/'); }, 1500);
+  }
+})();
+</script>
+</body>
+</html>`)
 
   } catch (err: any) {
     console.error('[strava/callback]', err)
