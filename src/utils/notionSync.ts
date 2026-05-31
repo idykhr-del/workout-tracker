@@ -134,6 +134,7 @@ export async function migrateToNotion(
     const s = sessions[i]
 
     // ── 1. Upsert session record (exercises: [] keeps the server call fast) ──
+    let sessionNotionId: string | undefined
     try {
       const res = await fetch(API, {
         method:  'PUT',
@@ -144,8 +145,10 @@ export async function migrateToNotion(
       })
       if (res.ok) {
         success++
+        const resBody = await res.json().catch(() => ({})) as Record<string, unknown>
+        sessionNotionId = typeof resBody.notionId === 'string' ? resBody.notionId : undefined
         console.log(
-          `[migrate] ✅ session (${i + 1}/${sessions.length}) id=${s.id} date=${s.date}`,
+          `[migrate] ✅ session (${i + 1}/${sessions.length}) id=${s.id} date=${s.date} notionId=${sessionNotionId ?? '?'}`,
         )
       } else {
         errors++
@@ -176,7 +179,7 @@ export async function migrateToNotion(
         await delay(300)
 
         const setLabel = `${ex.name} set${j + 1} / session ${s.date}`
-        const payload = {
+        const payload: Record<string, unknown> = {
           sessionId:  s.id,
           category:   ex.category,
           name:       ex.name,
@@ -184,6 +187,9 @@ export async function migrateToNotion(
           setNumber:  j + 1,
           set:        ex.sets[j],
           date:       s.date,
+          // session_relation をセットするために親セッションの Notion page ID を渡す
+          // ステップ1が失敗した場合は undefined になり、サーバー側で省略される
+          ...(sessionNotionId ? { sessionNotionId } : {}),
         }
         console.log(`[migrate] → POST ${EXERCISES_API} — ${setLabel}`, payload)
 

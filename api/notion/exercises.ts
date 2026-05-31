@@ -68,22 +68,23 @@ interface ExSet {
 }
 
 interface ReqBody {
-  sessionId:   string
-  category:    string
-  name:        string
-  instanceId?: string
-  setNumber:   number
-  set:         ExSet
-  date:        string
+  sessionId:       string
+  category:        string
+  name:            string
+  instanceId?:     string
+  setNumber:       number
+  set:             ExSet
+  date:            string
+  sessionNotionId?: string   // Notion page ID of the parent session (for session_relation)
 }
 
 // ─── Property builder ─────────────────────────────────────────────────────────
 
 function buildProps(body: ReqBody): Record<string, unknown> {
-  const { sessionId, category, name, setNumber, set, date } = body
+  const { sessionId, category, name, setNumber, set, date, sessionNotionId } = body
   const { memo: userMemo, weight, reps } = set
 
-  return {
+  const props: Record<string, unknown> = {
     Name:       titleProp(name),
     session_id: textProp(sessionId),
     category:   selectProp(category),
@@ -94,6 +95,13 @@ function buildProps(body: ReqBody): Record<string, unknown> {
     memo:       textProp(cleanMemo(userMemo)),
     date:       dateProp(date),
   }
+
+  // session_relation が指定されていればリレーションを設定する（なければ省略）
+  if (sessionNotionId) {
+    props.session_relation = { relation: [{ id: sessionNotionId }] }
+  }
+
+  return props
 }
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
