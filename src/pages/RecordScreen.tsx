@@ -130,73 +130,116 @@ function computePRs(session: WorkoutSession, allSessions: WorkoutSession[]): PRI
 interface PRTargetResult {
   /** Display variant */
   type: 'no_history' | 'zero_sets' | 'on_pace' | 'below_target' | 'same_pace' | 'confirmed'
-  /** Math.floor of best historical avg load (0 when no_history) */
+  /** Math.floor of best historical session avg load (0 when no_history) */
   bestAvg: number
   /** Math.floor of current session avg load (0 when zero_sets) */
   currentAvg: number
-  /** bestAvg + 1 — the minimum needed to beat the record */
+  /** bestAvg + 1 — the minimum avg load needed to beat the record */
   target: number
   /** target - currentAvg  (≥ 0; 0 when on_pace / confirmed) */
   gap: number
+  // ── Required-weight display fields ──────────────────────────────────
+  /** Planned total set count: 3, or validCurrent+1 when already ≥3 sets */
+  planSets: number
+  /** Sets still needed to reach planSets */
+  remainingSets: number
+  /** Reference reps from previous entry (fallback: 10) */
+  refReps: number
+  /** Weight per remaining set needed (rounded up to nearest 2.5 kg); undefined when already on pace */
+  reqWeight?: number
+  /** true when reqWeight > lastWeight × 1.2 (target is unrealistically high) */
+  tooHard: boolean
 }
 
 /**
- * Compute PR status for the currently selected exercise.
+ * Compute PR status and required-weight target for the currently selected exercise.
  *
  * Rules:
- *  - History lookup: name-only, instanceId-agnostic, excludes current session.
- *  - Average load   = Math.floor( Σ(weight × reps) / validSetCount )
- *  - Record beaten  = currentAvg > bestAvg  (strict >, NOT ≥)
- *  - "confirmed"    = 3+ valid sets AND currentAvg > bestAvg
+ *  - History lookup: name-only, session-level aggregation (all instances combined),
+ *    excludes current session. bestAvg = max per-session avg across all history.
+ *  - Average load = Math.floor( Σ(weight × reps) / validSetCount )
+ *  - Record beaten = currentAvg > bestAvg  (strict >, NOT ≥)
+ *  - "confirmed"  = 3+ valid sets AND currentAvg > bestAvg
  */
 function computePRTarget(
   sessions: WorkoutSession[],
   currentSessionId: string,
   name: string,
   currentSets: WorkoutSet[],
+  previousEntry: { sets: WorkoutSet[]; date: string } | null,
 ): PRTargetResult {
-  // ── 1. Find best historical avg (name-only, any category/instanceId) ──
+  // ── 1. Best historical avg — per SESSION (aggregate all instances) ──────
+  //    For each past session, combine all valid sets from ALL instances of
+  //    this exercise, compute the session average, take the max across sessions.
+  //    This prevents cherry-picking a single high-avg instance.
   const history = sessions.filter(s => s.id !== currentSessionId)
   let bestRaw = 0
 
   for (const s of history) {
-    for (const ex of s.exercises.filter(e => e.name === name)) {
-      const valid = ex.sets.filter(s => (s.weight ?? 0) > 0 && (s.reps ?? 0) > 0)
-      if (!valid.length) continue
-      const avg = valid.reduce((sum, s) => sum + s.weight! * s.reps!, 0) / valid.length
-      if (avg > bestRaw) bestRaw = avg
-    }
+    const valid = s.exercises
+      .filter(e => e.name === name)
+      .flatMap(e => e.sets)
+      .filter(set => (set.weight ?? 0) > 0 && (set.reps ?? 0) > 0)
+    if (!valid.length) continue
+    const avg = valid.reduce((sum, set) => sum + set.weight! * set.reps!, 0) / valid.length
+    if (avg > bestRaw) bestRaw = avg
   }
 
+  // ── Reference reps & last weight from previous entry ──────────────────
+  const prevValidSets = (previousEntry?.sets ?? []).filter(s => (s.weight ?? 0) > 0 && (s.reps ?? 0) > 0)
+  const refReps  = prevValidSets.length > 0 ? (prevValidSets[prevValidSets.length - 1].reps ?? 10) : 10
+  const lastWeight = prevValidSets.length > 0 ? (prevValidSets[prevValidSets.length - 1].weight ?? 0) : 0
+
   if (bestRaw === 0) {
-    return { type: 'no_history', bestAvg: 0, currentAvg: 0, target: 1, gap: 1 }
+    return { type: 'no_history', bestAvg: 0, currentAvg: 0, target: 1, gap: 1,
+             planSets: 3, remainingSets: 3, refReps, tooHard: false }
   }
 
   const bestAvg = Math.floor(bestRaw)
   const target  = bestAvg + 1
 
-  // ── 2. Compute current session avg ────────────────────────────────────
+  // ── 2. Current session avg ────────────────────────────────────────────
   const validCurrent = currentSets.filter(s => (s.weight ?? 0) > 0 && (s.reps ?? 0) > 0)
+  const planSets     = validCurrent.length >= 3 ? validCurrent.length + 1 : 3
 
   if (validCurrent.length === 0) {
-    return { type: 'zero_sets', bestAvg, currentAvg: 0, target, gap: target }
+    // 0 sets: show recommended weight for 3 sets at target avg
+    const reqLoadPerSet = target                               // need avg = target over 3 sets
+    const reqWeight     = Math.ceil((reqLoadPerSet / refReps) / 2.5) * 2.5
+    const tooHard       = lastWeight > 0 && reqWeight > lastWeight * 1.2
+    return { type: 'zero_sets', bestAvg, currentAvg: 0, target, gap: target,
+             planSets: 3, remainingSets: 3, refReps, reqWeight, tooHard }
   }
 
   const totalLoad  = validCurrent.reduce((sum, s) => sum + s.weight! * s.reps!, 0)
   const currentAvg = Math.floor(totalLoad / validCurrent.length)
   const gap        = Math.max(0, target - currentAvg)
 
+  // ── Required weight for remaining sets ────────────────────────────────
+  const remainingSets   = planSets - validCurrent.length
+  const targetTotal     = target * planSets
+  const neededMoreLoad  = targetTotal - totalLoad
+  const reqLoadPerSet   = remainingSets > 0 ? neededMoreLoad / remainingSets : 0
+  const reqWeight       = reqLoadPerSet > 0
+    ? Math.ceil((reqLoadPerSet / refReps) / 2.5) * 2.5
+    : undefined
+  const tooHard         = lastWeight > 0 && reqWeight != null && reqWeight > lastWeight * 1.2
+
   // ── 3. Classify ───────────────────────────────────────────────────────
   if (validCurrent.length >= 3 && currentAvg > bestAvg) {
-    return { type: 'confirmed', bestAvg, currentAvg, target, gap: 0 }
+    return { type: 'confirmed', bestAvg, currentAvg, target, gap: 0,
+             planSets, remainingSets, refReps, tooHard: false }
   }
   if (currentAvg > bestAvg) {
-    return { type: 'on_pace', bestAvg, currentAvg, target, gap: 0 }
+    return { type: 'on_pace', bestAvg, currentAvg, target, gap: 0,
+             planSets, remainingSets, refReps, tooHard: false }
   }
   if (currentAvg === bestAvg) {
-    return { type: 'same_pace', bestAvg, currentAvg, target, gap: 1 }
+    return { type: 'same_pace', bestAvg, currentAvg, target, gap: 1,
+             planSets, remainingSets, refReps, reqWeight, tooHard }
   }
-  return { type: 'below_target', bestAvg, currentAvg, target, gap }
+  return { type: 'below_target', bestAvg, currentAvg, target, gap,
+           planSets, remainingSets, refReps, reqWeight, tooHard }
 }
 
 function formatElapsed(sec: number): string {
@@ -340,7 +383,7 @@ export default function RecordScreen({
 
   /** PRターゲット計算（筋トレ種目のみ） */
   const prTarget = !isCardio
-    ? computePRTarget(sessions, session.id, selectedExercise, currentSets)
+    ? computePRTarget(sessions, session.id, selectedExercise, currentSets, previousEntry)
     : null
 
   const currentExerciseLabel = useMemo(() => {
@@ -813,43 +856,48 @@ export default function RecordScreen({
               </div>
             )}
 
-            {/* PR target display — 6 patterns */}
+            {/* PR target display */}
             {isWorkoutStarted && prTarget && (
               <div className="px-4 mt-1">
-                {/* 1. No history at all */}
+                {/* 初記録 */}
                 {prTarget.type === 'no_history' && (
                   <div className="text-[11px] text-accent/80 bg-accent/5 border border-accent/20 rounded-xl px-3 py-1.5">
                     🆕 初記録！どんな重量でも記録になります
                   </div>
                 )}
-                {/* 2. History exists but 0 valid sets recorded yet */}
-                {prTarget.type === 'zero_sets' && (
+                {/* 0セット：目安重量を表示 */}
+                {prTarget.type === 'zero_sets' && prTarget.reqWeight != null && (
                   <div className="text-[11px] text-muted/80 bg-surface/50 border border-border/60 rounded-xl px-3 py-1.5">
-                    🎯 前回の平均負荷：{prTarget.bestAvg}　記録更新には{prTarget.target}以上が必要
+                    🎯 記録更新の目安：<span className="font-bold text-white">{prTarget.reqWeight}kg × {prTarget.refReps}回</span> を3セット
+                    <span className="text-muted/60 ml-1">（目標平均負荷：{prTarget.target}）</span>
                   </div>
                 )}
-                {/* 3. 1–2 sets, strictly above best → on pace */}
+                {/* 記録更新ペース（1〜2セット） */}
                 {prTarget.type === 'on_pace' && (
                   <div className="text-[11px] text-accentGreen font-semibold bg-accentGreen/10 border border-accentGreen/30 rounded-xl px-3 py-1.5">
-                    ✅ 記録更新ペース！現在の平均負荷：{prTarget.currentAvg}
+                    ✅ 記録更新ペース！このまま継続で記録更新
+                    <span className="text-accentGreen/70 font-normal ml-1">（現在avg {prTarget.currentAvg}）</span>
                   </div>
                 )}
-                {/* 4. Below target — show gap */}
-                {prTarget.type === 'below_target' && (
-                  <div className="text-[11px] text-accent/80 bg-accent/5 border border-accent/20 rounded-xl px-3 py-1.5">
-                    🎯 あと{prTarget.gap}の負荷で記録更新（現在：{prTarget.currentAvg} / 目標：{prTarget.target}以上）
-                  </div>
-                )}
-                {/* 5. Exactly equal to best */}
-                {prTarget.type === 'same_pace' && (
-                  <div className="text-[11px] text-muted/80 bg-surface/50 border border-border/60 rounded-xl px-3 py-1.5">
-                    ➡️ 前回と同じペース（平均負荷：{prTarget.currentAvg}）
-                  </div>
-                )}
-                {/* 6. 3+ sets AND strictly above best → confirmed PR */}
+                {/* 記録更新達成（3セット以上） */}
                 {prTarget.type === 'confirmed' && (
                   <div className="text-[11px] text-accentGreen font-bold bg-accentGreen/10 border border-accentGreen/30 rounded-xl px-3 py-1.5 animate-pulse">
                     🎉 記録更新！平均負荷：{prTarget.currentAvg}（前回：{prTarget.bestAvg}）
+                  </div>
+                )}
+                {/* below_target / same_pace：現実的な目標 → 必要重量を表示 */}
+                {(prTarget.type === 'below_target' || prTarget.type === 'same_pace') && !prTarget.tooHard && prTarget.reqWeight != null && (
+                  <div className="text-[11px] text-accent/80 bg-accent/5 border border-accent/20 rounded-xl px-3 py-1.5">
+                    🎯 あと{prTarget.remainingSets}セット：
+                    <span className="font-bold text-white">{prTarget.reqWeight}kg × {prTarget.refReps}回</span> で記録更新
+                    <span className="text-muted/60 ml-1">（現在avg {prTarget.currentAvg} / 目標 {prTarget.target}）</span>
+                  </div>
+                )}
+                {/* below_target / same_pace：目標が高すぎる場合 */}
+                {(prTarget.type === 'below_target' || prTarget.type === 'same_pace') && prTarget.tooHard && (
+                  <div className="text-[11px] text-muted/70 bg-surface/50 border border-border/60 rounded-xl px-3 py-1.5">
+                    💪 現在のペースで継続中
+                    <span className="text-muted/50 ml-1">（現在avg {prTarget.currentAvg} / 目標 {prTarget.target}）</span>
                   </div>
                 )}
               </div>
