@@ -200,7 +200,10 @@ export async function migrateToNotion(
             // クライアント側でも memo を事前にクリーンアップ（サーバー側と二重で保護）
             body:    JSON.stringify({
               ...payload,
-              set: { ...payload.set, memo: cleanMemo(payload.set.memo) },
+              set: {
+                ...(payload.set as Record<string, unknown>),
+                memo: cleanMemo(((payload.set as Record<string, unknown>).memo ?? undefined) as string | undefined),
+              },
             }),
           })
           if (res.ok) {
