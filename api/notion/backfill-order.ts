@@ -59,6 +59,7 @@ async function queryAll(
   dbId: string,
   apiKey: string,
   filter?: AnyObj,
+  sorts?: AnyObj[],
 ): Promise<NotionPage[]> {
   const results: NotionPage[] = []
   let cursor: string | undefined
@@ -67,6 +68,7 @@ async function queryAll(
     const body: AnyObj = { page_size: 100 }
     if (cursor) body.start_cursor = cursor
     if (filter) body.filter = filter
+    if (sorts)  body.sorts  = sorts
 
     const res = await fetch(`${NOTION_BASE}/databases/${dbId}/query`, {
       method:  'POST',
@@ -105,6 +107,12 @@ function getText(page: NotionPage, prop: string): string {
 function getNum(page: NotionPage, prop: string): number | undefined {
   const v = (page.properties?.[prop] as AnyObj)?.number
   return typeof v === 'number' ? v : undefined
+}
+
+/** Read a date property's start value as a plain string. */
+function getDateStr(page: NotionPage, prop: string): string {
+  const d = (page.properties?.[prop] as AnyObj)?.date as AnyObj | undefined
+  return (d?.start as string) ?? ''
 }
 
 /**
@@ -183,12 +191,19 @@ export default async function handler(req: any, res: any) {
   console.log(`[backfill-order] start (dryRun=${dryRun})`)
 
   try {
-    // ── Step 1: Fetch all exercise pages ──────────────────────────────────────
-    console.log('[backfill-order] fetching all exercise pages…')
-    const allPages = await queryAll(exercisesDb, apiKey)
+    // ── Step 1: Fetch all exercise pages (created_time ASCENDING) ──────────────
+    // CRITICAL: query without a sort returns pages in an undefined order that, in
+    // practice, is newest-first. Combined with minute-precision created_time ties,
+    // a stable sort then preserves that reverse-chronological order → exercises
+    // come out reversed. Sorting ascending by created_time here makes the page
+    // list chronological, so first-appearance order == the real exercise order.
+    console.log('[backfill-order] fetching all exercise pages (created_time asc)…')
+    const allPages = await queryAll(exercisesDb, apiKey, undefined, [
+      { timestamp: 'created_time', direction: 'ascending' },
+    ])
     console.log(`[backfill-order] ${allPages.length} pages fetched`)
 
-    // ── Step 2: Group pages by session_id ─────────────────────────────────────
+    // ── Step 2: Group pages by session_id (preserves ascending order) ─────────
     const bySession = new Map<string, NotionPage[]>()
     for (const page of allPages) {
       const sid = getText(page, 'session_id')
@@ -199,39 +214,34 @@ export default async function handler(req: any, res: any) {
     console.log(`[backfill-order] ${bySession.size} unique sessions`)
 
     // ── Step 3: Compute target orders per page ────────────────────────────────
-    // Maps pageId → target order number
+    // Within each session, pages are already chronological (ascending created_time).
+    // Assign order by FIRST APPEARANCE of each exercise instance. This delegates
+    // all tie-breaking to Notion's ascending sort (which uses an internal creation
+    // sequence as the secondary key), avoiding fragile minute-level comparisons.
     const orderMap = new Map<string, number>()
 
     for (const [, pages] of bySession) {
-      // Group pages by exercise instance: (name + instanceId)
-      // Use created_time to sort instances in appearance order.
-      const instanceMap = new Map<string, { minCreated: string; pages: NotionPage[] }>()
+      const instanceOrder = new Map<string, number>()        // instKey → order
+      const instancePages = new Map<string, NotionPage[]>()  // instKey → pages
+      let nextOrder = 1
 
       for (const page of pages) {
         const name       = getText(page, 'Name')
         const instanceId = extractInstanceId(page) ?? ''
         const instKey    = `${name}\x00${instanceId}`
 
-        if (!instanceMap.has(instKey)) {
-          instanceMap.set(instKey, { minCreated: page.created_time, pages: [] })
+        if (!instanceOrder.has(instKey)) {
+          instanceOrder.set(instKey, nextOrder++)
+          instancePages.set(instKey, [])
         }
-        const entry = instanceMap.get(instKey)!
-        entry.pages.push(page)
-        if (page.created_time < entry.minCreated) {
-          entry.minCreated = page.created_time
-        }
+        instancePages.get(instKey)!.push(page)
       }
 
-      // Sort instances by earliest created_time → assign order 1, 2, 3…
-      const sorted = [...instanceMap.values()]
-        .sort((a, b) => a.minCreated.localeCompare(b.minCreated))
-
-      sorted.forEach((inst, idx) => {
-        const order = idx + 1
-        for (const page of inst.pages) {
+      for (const [instKey, order] of instanceOrder) {
+        for (const page of instancePages.get(instKey)!) {
           orderMap.set(page.id, order)
         }
-      })
+      }
     }
 
     // ── Step 4: Apply or preview ──────────────────────────────────────────────
@@ -240,7 +250,10 @@ export default async function handler(req: any, res: any) {
     let alreadySet = 0
     let errors     = 0
 
-    type PreviewItem = { pageId: string; sessionId: string; name: string; order: number }
+    type PreviewItem = {
+      pageId: string; sessionId: string; name: string; order: number
+      createdTime: string; date: string
+    }
     const preview: PreviewItem[] = []
 
     for (const page of allPages) {
@@ -260,10 +273,12 @@ export default async function handler(req: any, res: any) {
 
       if (dryRun) {
         preview.push({
-          pageId:    page.id,
-          sessionId: getText(page, 'session_id'),
-          name:      getText(page, 'Name'),
-          order:     targetOrder,
+          pageId:      page.id,
+          sessionId:   getText(page, 'session_id'),
+          name:        getText(page, 'Name'),
+          order:       targetOrder,
+          createdTime: page.created_time,
+          date:        getDateStr(page, 'date'),
         })
         updated++
         continue
