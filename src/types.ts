@@ -26,6 +26,12 @@ export interface ExerciseEntry {
   name: string
   instanceId?: string
   sets: WorkoutSet[]
+  /** 1-based position within the session (1 = first exercise started) */
+  order?: number
+  /** ISO 8601 UTC — timestamp when the exercise was first selected */
+  startTime?: string | null
+  /** ISO 8601 UTC — timestamp when the last set was recorded */
+  endTime?: string | null
 }
 
 export interface SessionNote {

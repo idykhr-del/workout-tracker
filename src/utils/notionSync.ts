@@ -187,6 +187,10 @@ export async function migrateToNotion(
           setNumber:  j + 1,
           set:        ex.sets[j],
           date:       s.date,
+          // 実施順序・時刻（ExerciseEntry に存在する場合のみ）
+          ...(ex.order     != null ? { order:     ex.order     } : {}),
+          ...(ex.startTime != null ? { startTime: ex.startTime } : {}),
+          ...(ex.endTime   != null ? { endTime:   ex.endTime   } : {}),
           // session_relation をセットするために親セッションの Notion page ID を渡す
           // ステップ1が失敗した場合は undefined になり、サーバー側で省略される
           ...(sessionNotionId ? { sessionNotionId } : {}),

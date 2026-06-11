@@ -130,6 +130,24 @@ function getSelect(page: NotionPage, prop: string): string {
   return (s?.name as string) ?? ''
 }
 
+/**
+ * Convert a UTC ISO string to JST (+09:00) ISO format for Notion Date properties.
+ * Returns null if the input is empty/invalid.
+ */
+function toJstIso(utcIso: string | null | undefined): string | null {
+  if (!utcIso) return null
+  try {
+    const d = new Date(utcIso)
+    if (isNaN(d.getTime())) return null
+    const jstMs = d.getTime() + 9 * 60 * 60 * 1000
+    const j  = new Date(jstMs)
+    const p  = (n: number) => String(n).padStart(2, '0')
+    return `${j.getUTCFullYear()}-${p(j.getUTCMonth() + 1)}-${p(j.getUTCDate())}T${p(j.getUTCHours())}:${p(j.getUTCMinutes())}:${p(j.getUTCSeconds())}+09:00`
+  } catch {
+    return null
+  }
+}
+
 // ─── Property builders ────────────────────────────────────────────────────────
 
 const titleProp  = (v: string) => ({ title:     [{ text: { content: v.slice(0, 2000) } }] })
@@ -268,11 +286,15 @@ function buildExerciseProps(
   set: AnyObj,
   sessionDate: string,
   sessionNotionId?: string,
+  exOrder?: number,
+  exStartTime?: string | null,
+  exEndTime?: string | null,
 ): AnyObj {
   const { memo: userMemo, weight, reps } = set as Record<string, unknown>
 
   // ── Strict whitelist: columns in workout_exercises DB ──
   // Name | session_id | session_relation | category | setNumber | weight | reps | memo | date
+  // order | start_time | end_time (newly added)
   const props: AnyObj = {
     Name:       titleProp(exName),
     session_id: textProp(sessionOriginalId),
@@ -283,7 +305,14 @@ function buildExerciseProps(
     // ユーザーメモのみ。__EXTRA__{...} サフィックスは除去する
     memo:       textProp(cleanMemo(userMemo as string | undefined)),
     date:       dateProp(sessionDate),
+    order:      numProp(typeof exOrder === 'number' ? exOrder : undefined),
   }
+
+  // Date props: only include when a valid value exists
+  const startIso = toJstIso(exStartTime)
+  const endIso   = toJstIso(exEndTime)
+  if (startIso) props.start_time = { date: { start: startIso, end: null } }
+  if (endIso)   props.end_time   = { date: { start: endIso,   end: null } }
 
   if (sessionNotionId) {
     props.session_relation = { relation: [{ id: sessionNotionId }] }
@@ -301,10 +330,13 @@ interface ExRecord {
   reps?:      number
   userMemo?:  string
   extra:      AnyObj
+  order?:     number
+  startTime?: string
+  endTime?:   string
 }
 
 function pageToExRecord(page: NotionPage): ExRecord {
-  const memoRaw          = getText(page, 'memo')
+  const memoRaw             = getText(page, 'memo')
   const { userMemo, extra } = decodeMemo(memoRaw, SEP_EXERCISE)
 
   return {
@@ -316,6 +348,9 @@ function pageToExRecord(page: NotionPage): ExRecord {
     reps:      getNum(page, 'reps'),
     userMemo,
     extra,
+    order:     getNum(page, 'order'),
+    startTime: getDateStr(page, 'start_time') || undefined,
+    endTime:   getDateStr(page, 'end_time')   || undefined,
   }
 }
 
@@ -336,13 +371,19 @@ function buildExercises(records: ExRecord[]): AnyObj[] {
   for (const [key, recs] of groups) {
     const [category, name, rawInstId] = key.split('\x00')
     const instanceId = rawInstId !== '_' ? rawInstId : undefined
+    // order / startTime / endTime are per-exercise (same value on all set rows).
+    // Take from the first record in the group (setNumber ordering already applied).
+    const first = recs[0]
 
     entries.push({
       category,
       name,
       instanceId,
+      order:     first.order   ?? undefined,
+      startTime: first.startTime ?? null,
+      endTime:   first.endTime   ?? null,
       sets: recs.map(r => ({
-        id:              (r.extra.setId    as string) ?? genId(),
+        id:              (r.extra.setId     as string) ?? genId(),
         timestamp:       (r.extra.timestamp as string) ?? new Date().toISOString(),
         weight:          r.weight,
         reps:            r.reps,
@@ -356,7 +397,15 @@ function buildExercises(records: ExRecord[]): AnyObj[] {
     })
   }
 
-  return entries
+  // Sort by order when available so GET responses come back in exercise order
+  return entries.sort((a, b) => {
+    const ao = (a as AnyObj).order as number | undefined
+    const bo = (b as AnyObj).order as number | undefined
+    if (ao == null && bo == null) return 0
+    if (ao == null) return 1
+    if (bo == null) return -1
+    return ao - bo
+  })
 }
 
 function genId(): string {
@@ -400,17 +449,23 @@ async function createExercisePages(
 ): Promise<void> {
   const exercises = (session.exercises ?? []) as AnyObj[]
   for (const ex of exercises) {
-    const sets = ((ex as Record<string, unknown>).sets ?? []) as AnyObj[]
+    const sets        = ((ex as Record<string, unknown>).sets      ?? []) as AnyObj[]
+    const exOrder     = (ex  as Record<string, unknown>).order     as number      | undefined
+    const exStartTime = (ex  as Record<string, unknown>).startTime as string|null | undefined
+    const exEndTime   = (ex  as Record<string, unknown>).endTime   as string|null | undefined
     for (let i = 0; i < sets.length; i++) {
       const set = { ...(sets[i] as Record<string, unknown>), instanceId: ex.instanceId }
       const props = buildExerciseProps(
-        session.id as string,
+        session.id  as string,
         ex.category as string,
         ex.name     as string,
         i + 1,
         set,
         session.date as string,
         sessionNotionId,
+        exOrder,
+        exStartTime,
+        exEndTime,
       )
       await nFetch('/pages', 'POST', apiKey, {
         parent:     { database_id: dbId },

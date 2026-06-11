@@ -83,14 +83,49 @@ function CategoryBadge({ category }: { category: Category }) {
   )
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Format a UTC ISO string to HH:MM in Asia/Tokyo timezone. Returns null on failure. */
+function fmtTime(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  try {
+    return new Date(iso).toLocaleTimeString('ja-JP', {
+      hour:     '2-digit',
+      minute:   '2-digit',
+      timeZone: 'Asia/Tokyo',
+      hour12:   false,
+    })
+  } catch {
+    return null
+  }
+}
+
 // ── View: one exercise block ───────────────────────────────────────────────────
 
 function ExerciseBlock({ entry }: { entry: WorkoutSession['exercises'][number] }) {
-  const isCardio = entry.category === '有酸素'
+  const isCardio  = entry.category === '有酸素'
+  const startStr  = fmtTime(entry.startTime)
+  const endStr    = fmtTime(entry.endTime)
+  const timeRange = startStr && endStr
+    ? `${startStr}–${endStr}`
+    : startStr ?? null
+
   return (
     <div className="py-2.5 px-4">
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-sm font-semibold text-white">{entry.name}</span>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {/* 実施順序バッジ */}
+          {entry.order != null && (
+            <span className="shrink-0 text-[9px] font-bold text-muted/60 bg-surface/80 border border-border/60 rounded px-1 py-0.5 leading-none">
+              #{entry.order}
+            </span>
+          )}
+          <span className="text-sm font-semibold text-white truncate">{entry.name}</span>
+          {/* 開始〜終了時刻 */}
+          {timeRange && (
+            <span className="shrink-0 text-[10px] text-muted/60 font-normal">{timeRange}</span>
+          )}
+        </div>
         <CategoryBadge category={entry.category} />
       </div>
       <div className="space-y-1">
@@ -156,12 +191,20 @@ function SessionCard({
         </div>
       </div>
 
-      {/* Exercises */}
+      {/* Exercises — sorted by order (ascending); exercises without order go last */}
       {session.exercises.length > 0 && (
         <div className="divide-y divide-border/60">
-          {session.exercises.map((ex, i) => (
-            <ExerciseBlock key={`${ex.name}-${ex.instanceId ?? i}`} entry={ex} />
-          ))}
+          {session.exercises
+            .slice()
+            .sort((a, b) => {
+              if (a.order == null && b.order == null) return 0
+              if (a.order == null) return 1
+              if (b.order == null) return -1
+              return a.order - b.order
+            })
+            .map((ex, i) => (
+              <ExerciseBlock key={`${ex.name}-${ex.instanceId ?? i}`} entry={ex} />
+            ))}
         </div>
       )}
 

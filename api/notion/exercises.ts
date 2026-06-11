@@ -45,6 +45,24 @@ const numProp    = (v: number | undefined | null) => ({ number: v ?? null })
 const dateProp   = (v: string) => ({ date: v ? { start: v } : null })
 const selectProp = (v: string) => ({ select: v ? { name: v } : null })
 
+/**
+ * Convert a UTC ISO string to JST (+09:00) ISO format for Notion Date properties.
+ * Returns null if the input is empty/invalid.
+ */
+function toJstIso(utcIso: string | null | undefined): string | null {
+  if (!utcIso) return null
+  try {
+    const d = new Date(utcIso)
+    if (isNaN(d.getTime())) return null
+    const jstMs = d.getTime() + 9 * 60 * 60 * 1000
+    const j  = new Date(jstMs)
+    const p  = (n: number) => String(n).padStart(2, '0')
+    return `${j.getUTCFullYear()}-${p(j.getUTCMonth() + 1)}-${p(j.getUTCDate())}T${p(j.getUTCHours())}:${p(j.getUTCMinutes())}:${p(j.getUTCSeconds())}+09:00`
+  } catch {
+    return null
+  }
+}
+
 /** __EXTRA__{...} サフィックスを除去してユーザーメモだけ返す */
 function cleanMemo(m: string | undefined): string {
   if (!m) return ''
@@ -68,20 +86,24 @@ interface ExSet {
 }
 
 interface ReqBody {
-  sessionId:       string
-  category:        string
-  name:            string
-  instanceId?:     string
-  setNumber:       number
-  set:             ExSet
-  date:            string
+  sessionId:        string
+  category:         string
+  name:             string
+  instanceId?:      string
+  setNumber:        number
+  set:              ExSet
+  date:             string
   sessionNotionId?: string   // Notion page ID of the parent session (for session_relation)
+  order?:           number       // 1-based exercise position within the session
+  startTime?:       string | null  // ISO 8601 UTC — when exercise was selected
+  endTime?:         string | null  // ISO 8601 UTC — when last set was recorded
 }
 
 // ─── Property builder ─────────────────────────────────────────────────────────
 
 function buildProps(body: ReqBody): Record<string, unknown> {
-  const { sessionId, category, name, setNumber, set, date, sessionNotionId } = body
+  const { sessionId, category, name, setNumber, set, date, sessionNotionId,
+          order, startTime, endTime } = body
   const { memo: userMemo, weight, reps } = set
 
   const props: Record<string, unknown> = {
@@ -94,7 +116,14 @@ function buildProps(body: ReqBody): Record<string, unknown> {
     // ユーザーメモのみ。__EXTRA__{...} サフィックスは除去する
     memo:       textProp(cleanMemo(userMemo)),
     date:       dateProp(date),
+    order:      numProp(typeof order === 'number' ? order : undefined),
   }
+
+  // Date props — only add when a valid ISO value exists
+  const startIso = toJstIso(startTime)
+  const endIso   = toJstIso(endTime)
+  if (startIso) props.start_time = { date: { start: startIso, end: null } }
+  if (endIso)   props.end_time   = { date: { start: endIso,   end: null } }
 
   // session_relation が指定されていればリレーションを設定する（なければ省略）
   if (sessionNotionId) {

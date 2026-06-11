@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import type { Category, WorkoutSession, ExerciseEntry, WorkoutSet, SessionNote } from '../types'
 import {
   CATEGORIES,
@@ -261,6 +261,14 @@ export default function RecordScreen({
   const [session, setSession] = useState<WorkoutSession>(() => loadDraftSync() ?? newSession())
   const [usage,   setUsage]   = useState<UsageMap>(() => loadUsageSync())
 
+  /**
+   * Tracks when the CURRENT exercise was selected (or workout started).
+   * Used as startTime when the first set for this exercise is recorded.
+   * Not persisted — only matters between exercise selection and first set.
+   * Once the first set is added, startTime lives in ExerciseEntry (draft-persisted).
+   */
+  const currentExerciseStartedAt = useRef<string>(new Date().toISOString())
+
   // ── Workout active state ──────────────────────────────────────────
   // Workout is "started" if the session already has a startTime (persisted in draft)
   const [isWorkoutStarted, setIsWorkoutStarted] = useState<boolean>(() => {
@@ -490,6 +498,8 @@ export default function RecordScreen({
     const now    = new Date()
     const date   = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     const time   = now.toTimeString().slice(0, 5)
+    // Reset exercise start timestamp to workout start time
+    currentExerciseStartedAt.current = now.toISOString()
     updateSession({ ...session, date, startTime: time })
     setIsWorkoutStarted(true)
   }
@@ -499,10 +509,14 @@ export default function RecordScreen({
     setSelectedCategory(cat); setIsMemoMode(false)
     setSelectedExercise(allExercisesForCat(cat)[0] ?? '')
     setCurrentInstanceId(crypto.randomUUID()); clearSetInputs()
+    // Record when this exercise category (and its default exercise) was selected
+    currentExerciseStartedAt.current = new Date().toISOString()
   }
 
   const handleExerciseChange = (name: string) => {
     setSelectedExercise(name); setCurrentInstanceId(crypto.randomUUID()); clearSetInputs()
+    // Record when this specific exercise was selected (used as startTime on first set)
+    currentExerciseStartedAt.current = new Date().toISOString()
   }
 
   // ── Set CRUD ──────────────────────────────────────────────────────
@@ -520,14 +534,18 @@ export default function RecordScreen({
   }
 
   const deleteSet = (setId: string) => {
-    const updated = session.exercises
-      .map(e => {
-        if (e.category === selectedCategory && e.name === selectedExercise && e.instanceId === currentInstanceId)
-          return { ...e, sets: e.sets.filter(s => s.id !== setId) }
-        return e
-      })
-      .filter(e => e.sets.length > 0)
-    updateSession({ ...session, exercises: updated })
+    const mapped = session.exercises.map(e => {
+      if (e.category === selectedCategory && e.name === selectedExercise && e.instanceId === currentInstanceId)
+        return { ...e, sets: e.sets.filter(s => s.id !== setId) }
+      return e
+    })
+    const filtered = mapped.filter(e => e.sets.length > 0)
+    // Re-number order 1,2,3... preserving the relative sequence after any removal
+    const reordered = filtered
+      .slice()
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+      .map((e, i) => ({ ...e, order: i + 1 }))
+    updateSession({ ...session, exercises: reordered })
     setDeleteConfirmId(null)
     if (editingSetId === setId) clearSetInputs()
   }
@@ -546,11 +564,20 @@ export default function RecordScreen({
         const newInstId = crypto.randomUUID()
         setCurrentInstanceId(newInstId)
         const splitNow = new Date()
+        const splitNowIso = splitNow.toISOString()
         updateSession({
           ...newSession(),
           date: `${splitNow.getFullYear()}-${String(splitNow.getMonth() + 1).padStart(2, '0')}-${String(splitNow.getDate()).padStart(2, '0')}`,
           startTime: splitNow.toTimeString().slice(0, 5),
-          exercises: [{ category: selectedCategory, name: selectedExercise, instanceId: newInstId, sets: [splitSet] }],
+          exercises: [{
+            category:   selectedCategory,
+            name:       selectedExercise,
+            instanceId: newInstId,
+            sets:       [splitSet],
+            order:      1,
+            startTime:  splitNowIso,
+            endTime:    splitNowIso,
+          }],
         })
         clearSetInputs()
         showToast('前回のトレーニングから5時間以上経過したため、新しいセッションを開始しました')
@@ -559,8 +586,9 @@ export default function RecordScreen({
     }
 
     // ── Normal add / update ──────────────────────────────────────
-    const newSet = buildNewSet(editingSetId ?? undefined)
-    const ex     = currentExerciseEntry()
+    const newSet  = buildNewSet(editingSetId ?? undefined)
+    const nowIso  = new Date().toISOString()
+    const ex      = currentExerciseEntry()
     let updatedExercises: ExerciseEntry[]
     if (ex) {
       updatedExercises = session.exercises.map(e => {
@@ -568,14 +596,25 @@ export default function RecordScreen({
           const sets = editingSetId
             ? e.sets.map(s => s.id === editingSetId ? newSet : s)
             : [...e.sets, newSet]
-          return { ...e, sets }
+          // Update endTime whenever a new set is added (not when editing an existing set)
+          return editingSetId ? { ...e, sets } : { ...e, sets, endTime: nowIso }
         }
         return e
       })
     } else {
+      // First set for this exercise — assign order and capture timestamps
+      const maxOrder   = session.exercises.reduce((m, e) => Math.max(m, e.order ?? 0), 0)
       updatedExercises = [
         ...session.exercises,
-        { category: selectedCategory, name: selectedExercise, instanceId: currentInstanceId, sets: [newSet] },
+        {
+          category:   selectedCategory,
+          name:       selectedExercise,
+          instanceId: currentInstanceId,
+          sets:       [newSet],
+          order:      maxOrder + 1,
+          startTime:  currentExerciseStartedAt.current,
+          endTime:    nowIso,
+        },
       ]
     }
     updateSession({ ...session, exercises: updatedExercises })
